@@ -25,6 +25,11 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # pnpm doesn't support npm's OIDC trusted publishing yet (pnpm#10075).
+      # We pack with pnpm (for `workspace:^` → real version substitution) and
+      # publish with npm. OIDC trusted publishing in npm CLI needs >= 11.5.
+      - run: npm install --global npm@latest
+
       - run: pnpm install --frozen-lockfile
 
       # Guard: the tag (v0.2.0) must match both package.json versions. Prevents
@@ -43,10 +48,17 @@ jobs:
       - run: pnpm build
       - run: pnpm check:all
 
-      # pnpm -r publishes in topological order (core before nestjs) and substitutes
-      # `workspace:^` with the real version. `--no-git-checks` disables the "must be
-      # on main + clean tree" guard that's meaningless in a tagged CI run.
-      # No token — auth via npm Trusted Publishing (OIDC). `id-token: write` above
-      # gives this job an OIDC token that npm validates against each package's
-      # configured GitHub trusted publisher.
-      - run: pnpm -r publish --no-git-checks --provenance
+      # Publish each package: pnpm pack writes a tarball with `workspace:^` rewritten
+      # to the real version; npm publish uploads it using its OIDC flow (the
+      # `id-token: write` permission above is what makes the OIDC token available).
+      - name: Publish @voznov/zod-dto
+        working-directory: packages/core
+        run: |
+          pnpm pack
+          npm publish --provenance *.tgz
+
+      - name: Publish @voznov/zod-dto-nestjs
+        working-directory: packages/nestjs
+        run: |
+          pnpm pack
+          npm publish --provenance *.tgz
