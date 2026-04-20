@@ -1,6 +1,6 @@
 {
   "name": "@voznov/zod-dto",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Framework-agnostic ZodDto factory — turn Zod schemas into validatable DTO classes",
   "keywords": ["zod", "dto", "validation", "typescript", "schema", "class"],
   "author": "Petr Voznov",

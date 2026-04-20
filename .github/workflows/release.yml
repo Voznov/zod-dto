@@ -24,7 +24,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          registry-url: https://registry.npmjs.org
 
       - run: pnpm install --frozen-lockfile
 
@@ -47,6 +46,7 @@ jobs:
       # pnpm -r publishes in topological order (core before nestjs) and substitutes
       # `workspace:^` with the real version. `--no-git-checks` disables the "must be
       # on main + clean tree" guard that's meaningless in a tagged CI run.
+      # No token — auth via npm Trusted Publishing (OIDC). `id-token: write` above
+      # gives this job an OIDC token that npm validates against each package's
+      # configured GitHub trusted publisher.
       - run: pnpm -r publish --no-git-checks --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

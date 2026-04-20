@@ -18,9 +18,11 @@ export interface ZodDtoOptions<T extends z.ZodRawShape = z.ZodRawShape> {
 type OnCreateHook = (dtoClass: ZodDtoClass) => void;
 
 const onCreateHooks: OnCreateHook[] = [];
+const createdDtos: ZodDtoClass[] = [];
 
 export const registerOnCreate = (hook: OnCreateHook): (() => void) => {
   onCreateHooks.push(hook);
+  for (const dto of createdDtos) hook(dto);
 
   return () => {
     const index = onCreateHooks.indexOf(hook);
@@ -129,6 +131,7 @@ export function ZodDto<T extends z.ZodRawShape>(
   result.omit = (mask) => ZodDto(objectSchema.omit(mask));
   result.pick = (mask) => ZodDto(objectSchema.pick(mask));
 
+  createdDtos.push(result as ZodDtoClass);
   for (const hook of onCreateHooks) {
     hook(result as ZodDtoClass);
   }

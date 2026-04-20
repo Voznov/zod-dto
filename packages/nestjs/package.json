@@ -1,6 +1,6 @@
 {
   "name": "@voznov/zod-dto-nestjs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "NestJS adapter for @voznov/zod-dto — validation pipe, Swagger generation",
   "keywords": ["zod", "dto", "nestjs", "validation", "openapi", "swagger", "typescript"],
   "author": "Petr Voznov",
