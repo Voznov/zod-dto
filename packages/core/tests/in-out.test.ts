@@ -73,6 +73,32 @@ describe('out hook', () => {
     expect(JSON.parse(JSON.stringify(dto))).toEqual({ inner: { sum: 5 }, label: 'x' });
   });
 
+  it('DTO inside a discriminated union is hydrated — its out fires', () => {
+    const CatDto = ZodDto(z.object({ kind: z.literal('cat'), name: z.string(), secret: z.string() }), {
+      out: (p) => ({ kind: p.kind, name: p.name }),
+    });
+    const DogDto = ZodDto(z.object({ kind: z.literal('dog'), name: z.string(), secret: z.string() }), {
+      out: (p) => ({ kind: p.kind, name: p.name }),
+    });
+    const Wrapper = ZodDto(z.object({ pet: z.discriminatedUnion('kind', [CatDto, DogDto]) }));
+
+    const dto = toDto(Wrapper, { pet: { kind: 'cat', name: 'Tom', secret: 'hidden' } });
+    expect(JSON.parse(JSON.stringify(dto))).toEqual({ pet: { kind: 'cat', name: 'Tom' } });
+  });
+
+  it('DTO inside a plain union is hydrated — its out fires', () => {
+    const SquareDto = ZodDto(z.object({ side: z.number() }), {
+      out: (p) => ({ area: p.side * p.side }),
+    });
+    const CircleDto = ZodDto(z.object({ radius: z.number() }), {
+      out: (p) => ({ area: Math.PI * p.radius * p.radius }),
+    });
+    const Wrapper = ZodDto(z.object({ shape: z.union([SquareDto, CircleDto]) }));
+
+    const dto = toDto(Wrapper, { shape: { side: 3 } });
+    expect(JSON.parse(JSON.stringify(dto))).toEqual({ shape: { area: 9 } });
+  });
+
   it('instance retains original parsed shape (out affects only serialization)', () => {
     const dto = toDto(UserDto, { firstName: 'Ada', lastName: 'Lovelace', password: 'secret' });
     expect(dto.firstName).toBe('Ada');
