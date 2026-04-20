@@ -2,8 +2,16 @@
   "name": "@voznov/zod-dto-nestjs",
   "version": "0.1.0",
   "description": "NestJS adapter for @voznov/zod-dto — validation pipe, Swagger generation",
+  "keywords": ["zod", "dto", "nestjs", "validation", "openapi", "swagger", "typescript"],
   "author": "Petr Voznov",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/Voznov/zod-dto/tree/master/packages/nestjs#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Voznov/zod-dto.git",
+    "directory": "packages/nestjs"
+  },
+  "bugs": "https://github.com/Voznov/zod-dto/issues",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -21,6 +29,9 @@
     }
   },
   "files": ["dist", "LICENSE", "NOTICE"],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit"
@@ -30,5 +41,8 @@
     "@nestjs/swagger": ">=7.0.0",
     "@voznov/zod-dto": "workspace:^",
     "zod": ">=4.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for npm provenance (OIDC-signed Sigstore attestation that links
+      # the published package to this repo + workflow run).
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      # Guard: the tag (v0.2.0) must match both package.json versions. Prevents
+      # "I tagged but forgot to bump" / "bumped only one package" mistakes.
+      - name: Verify tag matches package versions
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CORE_VERSION=$(node -p "require('./packages/core/package.json').version")
+          NESTJS_VERSION=$(node -p "require('./packages/nestjs/package.json').version")
+          echo "tag=$TAG_VERSION core=$CORE_VERSION nestjs=$NESTJS_VERSION"
+          if [ "$TAG_VERSION" != "$CORE_VERSION" ] || [ "$TAG_VERSION" != "$NESTJS_VERSION" ]; then
+            echo "::error::tag $TAG_VERSION does not match both package versions"
+            exit 1
+          fi
+
+      - run: pnpm check:all
+      - run: pnpm build
+
+      # pnpm -r publishes in topological order (core before nestjs) and substitutes
+      # `workspace:^` with the real version. `--no-git-checks` disables the "must be
+      # on main + clean tree" guard that's meaningless in a tagged CI run.
+      - run: pnpm -r publish --no-git-checks --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
