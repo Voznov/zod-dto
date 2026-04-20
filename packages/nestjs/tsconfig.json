@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "paths": {
+      "@voznov/zod-dto": ["../core/src/index.ts"]
+    }
+  },
+  "include": ["src", "tests"]
+}

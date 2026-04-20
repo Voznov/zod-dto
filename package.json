@@ -1,0 +1,28 @@
+{
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "vitest run",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "check:all": "pnpm typecheck && pnpm lint && pnpm test"
+  },
+  "devDependencies": {
+    "@nestjs/common": "^11.1.17",
+    "@nestjs/swagger": "^11.2.6",
+    "eslint": "^9.39.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-import-x": "^4.16.1",
+    "eslint-plugin-prettier": "^5.5.4",
+    "prettier": "^3.6.2",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.3",
+    "vitest": "^3.2.3",
+    "zod": "^4.3.6"
+  }
+}
