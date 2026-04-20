@@ -10,7 +10,17 @@ type ZodDtoMethods<S extends z.ZodObject> = {
   ): ZodDtoClass<z.ZodObject<z.core.util.Flatten<Omit<S['shape'], Extract<keyof S['shape'], keyof M>>>>>;
 };
 
-export type ZodDtoClass<S extends z.ZodObject = z.ZodObject> = Omit<S, keyof ZodDtoMethods<S>> & ZodDtoMethods<S> & (new () => z.infer<S>);
+/**
+ * A DTO class. The optional `Self` generic narrows Zod's inferred output type
+ * (via Zod's own `$ZodNarrow`) — pass it as `ZodDto<MyPoint>(...)` when subclassing
+ * via `class MyPoint extends ZodDto<MyPoint>(...)`, and subclass methods will
+ * propagate through `z.infer` in nested positions (`z.array(MyPoint)`,
+ * `z.object({ p: MyPoint })`, discriminated unions, ...). Default `Self = z.infer<S>`
+ * matches plain (non-subclassed) DTO behavior.
+ */
+export type ZodDtoClass<S extends z.ZodObject = z.ZodObject, Self = z.infer<S>> = Omit<z.core.$ZodNarrow<S, Self>, keyof ZodDtoMethods<S>> &
+  ZodDtoMethods<S> &
+  (new () => z.infer<S>);
 
 export class ZodDtoBase {}
 
