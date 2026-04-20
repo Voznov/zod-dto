@@ -41,8 +41,8 @@ jobs:
             exit 1
           fi
 
-      - run: pnpm check:all
       - run: pnpm build
+      - run: pnpm check:all
 
       # pnpm -r publishes in topological order (core before nestjs) and substitutes
       # `workspace:^` with the real version. `--no-git-checks` disables the "must be
