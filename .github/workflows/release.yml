@@ -20,15 +20,15 @@ jobs:
         with:
           version: 10
 
+      # Node 24 LTS ships with npm 11.x, which has OIDC trusted-publishing support
+      # (npm 10 from Node 22 lacks it, and `npm install -g npm@latest` breaks the
+      # bundled install). pnpm doesn't support OIDC publishing yet (pnpm#10075), so
+      # we pack with pnpm (for `workspace:^` → real version substitution) and
+      # upload with npm — see the publish steps below.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
-
-      # pnpm doesn't support npm's OIDC trusted publishing yet (pnpm#10075).
-      # We pack with pnpm (for `workspace:^` → real version substitution) and
-      # publish with npm. OIDC trusted publishing in npm CLI needs >= 11.5.
-      - run: npm install --global npm@latest
 
       - run: pnpm install --frozen-lockfile
 
