@@ -24,13 +24,12 @@ import { ZodDto } from '@voznov/zod-dto';
 import { z } from 'zod';
 
 const CreateUserDto = ZodDto(z.object({ name: z.string(), email: z.email() }));
-type CreateUser = z.infer<typeof CreateUserDto>;
 
 @Controller('users')
 export class UsersController {
   @Post()
-  create(@Body() body: CreateUser) {
-    // already validated; `body` is a CreateUserDto instance
+  create(@Body() body: CreateUserDto) {
+    // already validated; `body` is a CreateUserDto instance.
   }
 }
 ```
@@ -69,4 +68,4 @@ app.useGlobalPipes(
 
 ## License
 
-Apache-2.0
+[Apache-2.0](./LICENSE)

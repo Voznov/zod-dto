@@ -19,4 +19,4 @@ pnpm check:all   # typecheck + lint + test
 
 ## License
 
-Apache-2.0
+[Apache-2.0](./LICENSE)

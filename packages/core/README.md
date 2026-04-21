@@ -107,7 +107,7 @@ const result = toDto(List, { points: [{ x: 1, y: 2 }] });
 result.points[0].label(); // OK — no cast
 ```
 
-If you omit `<MyPoint>()` and just extend `ZodDto(...)` directly, the class still works at runtime — every DTO node in the parse result is constructed into the right class via an override on Zod's internal parse path — but nested-position types fall back to the plain shape (`{x, y}`), so you'd need `as InstanceType<typeof MyPoint>` to reach subclass methods.
+If you omit `<MyPoint>()` and just extend `ZodDto(...)` directly, the class still works at runtime — every DTO node in the parse result is constructed into the right class — but nested-position types fall back to the plain shape (`{x, y}`), so you'd need `as InstanceType<typeof MyPoint>` to reach subclass methods.
 
 ## Composition
 
@@ -210,8 +210,8 @@ const ProfileDto = ZodDto(z.object({ userId: z.uuid(), secret: z.string() }), {
 | `ZodDtoValidationError`    | `{ issues: string[] }` thrown by `toDto`.                                          |
 | `formatZodIssues(issues)`  | Format `z.core.$ZodIssue[]` into `path: message` strings.                          |
 | `isZodDtoClass(value)`     | Type guard.                                                                        |
-| `registerOnCreate(hook)`   | Register a callback fired for every DTO class created. Used by extension packages. |
+| `registerOnCreate(hook)`   | Register a callback fired for every DTO class created. Also fires retroactively for DTOs that existed before registration, so extension packages (Swagger etc.) work regardless of import order. |
 
 ## License
 
-Apache-2.0
+[Apache-2.0](./LICENSE)

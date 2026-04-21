@@ -41,6 +41,3 @@ coverage/
 # Cache
 .eslintcache
 .cache/
-
-# Generated: copied from node_modules by Vite buildStart plugin
-web-client/public/rnnoise-sync.js
