@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ZodDtoBase, type ZodDtoClass } from './base';
+import { isZodDtoClass, ZodDtoBase, type ZodDtoClass } from './base';
 import { formatZodIssues, ZodDtoValidationError } from './errors';
 
 export type { ZodDtoClass } from './base';
@@ -34,19 +34,20 @@ const perClassZod = new WeakMap<new () => object, object>();
 
 type ZodRunMethod = (payload: { value: unknown; issues: unknown[] }, ctx: unknown) => unknown;
 
-// Default form: `ZodDto(schema)` — T inferred, no Self.
+export function ZodDto<T extends z.ZodRawShape>(objectSchema: ZodDtoClass<z.ZodObject<T>>, options?: ZodDtoOptions<T>): ZodDtoClass<z.ZodObject<T>>;
 export function ZodDto<T extends z.ZodRawShape>(objectSchema: z.ZodObject<T>, options?: ZodDtoOptions<T>): ZodDtoClass<z.ZodObject<T>>;
-// Curried form for self-typed subclassing: `class MyPoint extends ZodDto<MyPoint>()(schema) {}`.
-// Partial-explicit generics (`ZodDto<Self>(schema)`) break T inference in TS — T would fall back
-// to its default. Splitting into two calls lets the inner call infer T cleanly from the argument.
 export function ZodDto<Self>(): <T extends z.ZodRawShape>(objectSchema: z.ZodObject<T>, options?: ZodDtoOptions<T>) => ZodDtoClass<z.ZodObject<T>, Self>;
 export function ZodDto<T extends z.ZodRawShape>(
-  objectSchema?: z.ZodObject<T>,
+  objectSchema?: z.ZodObject<T> | ZodDtoClass<z.ZodObject<T>>,
   options?: ZodDtoOptions<T>,
 ): ZodDtoClass<z.ZodObject<T>> | ((s: z.ZodObject<T>, o?: ZodDtoOptions<T>) => ZodDtoClass<z.ZodObject<T>>) {
   if (objectSchema === undefined) {
     return (s, o) => ZodDto(s, o);
   }
+  if (isZodDtoClass(objectSchema)) {
+    return objectSchema as ZodDtoClass<z.ZodObject<T>>;
+  }
+
   const effectiveSchema = options?.in ? z.preprocess(options.in, objectSchema) : objectSchema;
 
   class Dto extends ZodDtoBase {

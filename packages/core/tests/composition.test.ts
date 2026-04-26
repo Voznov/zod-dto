@@ -117,4 +117,41 @@ describe('composition', () => {
       expect(result.members).toHaveLength(2);
     });
   });
+
+  // Regression: ZodDto wrapping an already-DTO chain used to hang tsc on chained
+  // derivations because TS tried to unify ZodDtoClass<...> against z.ZodObject<T>
+  // to infer T. The first ZodDto overload now accepts ZodDtoClass directly and
+  // returns it as-is; the runtime guard mirrors the type-level passthrough.
+  describe('idempotent ZodDto(dto)', () => {
+    const Base = ZodDto(z.object({ a: z.string(), b: z.number(), c: z.boolean() }));
+
+    it('returns the same class reference when input is already a DTO', () => {
+      expect(ZodDto(Base)).toBe(Base);
+    });
+
+    it('chained derivations re-wrapped in ZodDto compile and parse correctly', () => {
+      class Derived extends ZodDto(Base.omit({ c: true }).extend({ d: z.string() })) {}
+      class Deeper extends ZodDto(Derived.extend({ e: z.string() })) {}
+
+      const d = toDto(Derived, { a: 'x', b: 1, d: 'y' });
+      expect(d).toBeInstanceOf(Derived);
+      expect(d).toEqual({ a: 'x', b: 1, d: 'y' });
+
+      const e = toDto(Deeper, { a: 'x', b: 1, d: 'y', e: 'z' });
+      expect(e).toBeInstanceOf(Deeper);
+      expect(e).toEqual({ a: 'x', b: 1, d: 'y', e: 'z' });
+    });
+
+    it('subclassing a re-wrapped chain still produces subclass instances', () => {
+      class Wrapped extends ZodDto(Base.omit({ c: true })) {
+        labelled() {
+          return `${this.a}/${this.b}`;
+        }
+      }
+
+      const w = toDto(Wrapped, { a: 'x', b: 7 });
+      expect(w).toBeInstanceOf(Wrapped);
+      expect(w.labelled()).toBe('x/7');
+    });
+  });
 });
