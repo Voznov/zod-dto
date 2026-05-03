@@ -14,19 +14,27 @@ pnpm add @voznov/zod-dto zod
 import { z } from 'zod';
 import { ZodDto, toDto } from '@voznov/zod-dto';
 
-const UserDto = ZodDto(
+class UserDto extends ZodDto(
   z.object({
     id: z.uuid(),
     name: z.string(),
     email: z.email(),
   }),
-);
+) {}
 
-type User = z.infer<typeof UserDto>;
+// `UserDto` is both a type and a value under one name — use it directly:
+function greet(u: UserDto) { return `Hi, ${u.name}`; }
+const user = toDto(UserDto, rawData); // parse + validate; throws ZodDtoValidationError
+greet(user);
+```
 
-// Parse + validate. Throws ZodDtoValidationError on failure.
-const user = toDto(UserDto, rawData);
-// `user` is a UserDto instance.
+Prefer `class X extends ZodDto(...) {}` over `const X = ZodDto(...)` + `type X = z.infer<typeof X>` — it collapses the two names into one and `instanceof X` works for free.
+
+`toDto(UserDto, raw)` is just `UserDto.safeParse(raw)` + throw on failure + return the (already-constructed) instance. The DTO class is itself a Zod schema, so you can call `.safeParse` / `.parse` (and async variants) directly when you'd rather get a `Result` than a throw — the returned `data` is a real `UserDto` instance either way:
+
+```ts
+const r = UserDto.safeParse(rawData);
+if (r.success) r.data instanceof UserDto; // true
 ```
 
 ## `options.in` — input preprocessor
@@ -81,37 +89,42 @@ user.password; // 'x' — instance retains the original parsed shape
 JSON.stringify(user); // '{"fullName":"Ada Lovelace"}'
 ```
 
-## It's a real class
+## Subclassing with methods (advanced)
 
-`ZodDto(...)` returns a constructable class. `new UserDto()` and `toDto(UserDto, data)` both produce instances — `instanceof UserDto` is true in either case. Handy for NestJS `@Body() body: UserDto`, `instanceof` checks, and class-based DI patterns.
-
-You can subclass to add methods:
+You can add methods on the subclass:
 
 ```ts
-class MyPoint extends ZodDto<MyPoint>()(z.object({ x: z.number(), y: z.number() })) {
+class MyPoint extends ZodDto(z.object({ x: z.number(), y: z.number() })) {
   label() {
     return `(${this.x}, ${this.y})`;
   }
 }
 
 const p = toDto(MyPoint, { x: 3, y: 4 });
-p instanceof MyPoint; // true
-p.label(); // '(3, 4)'
+p.label(); // '(3, 4)' — works at top level
 ```
 
-Note the `<MyPoint>()` two-step call. The generic fills `Self` so `z.infer<>` propagates subclass methods through **nested** schema positions (`z.array(MyPoint)`, `z.object({ p: MyPoint })`, discriminated unions, ...); the empty `()` then receives the schema with `T` properly inferred (TypeScript can't do both partial-explicit generics and inference in one call):
+This works at runtime **everywhere** — every DTO node in the parse result is constructed into the right class. But in **nested** schema positions (`z.array(MyPoint)`, `z.object({ p: MyPoint })`, discriminated unions, ...) `z.infer<>` falls back to the plain shape (`{x, y}`), so you'd need `as InstanceType<typeof MyPoint>` to reach subclass methods.
+
+To make subclass methods propagate through nested positions in the type system, use the `<Self>()` two-step:
 
 ```ts
+class MyPoint extends ZodDto<MyPoint>()(z.object({ x: z.number(), y: z.number() })) {
+  label() { return `(${this.x}, ${this.y})`; }
+}
+
 const List = ZodDto(z.object({ points: z.array(MyPoint) }));
 const result = toDto(List, { points: [{ x: 1, y: 2 }] });
 result.points[0].label(); // OK — no cast
 ```
 
-If you omit `<MyPoint>()` and just extend `ZodDto(...)` directly, the class still works at runtime — every DTO node in the parse result is constructed into the right class — but nested-position types fall back to the plain shape (`{x, y}`), so you'd need `as InstanceType<typeof MyPoint>` to reach subclass methods.
+The generic fills `Self` so `z.infer<>` carries the subclass type; the empty `()` then receives the schema with `T` properly inferred (TypeScript can't do both partial-explicit generics and inference in one call).
 
 ## Composition
 
-Derived DTOs inherit the base shape but not the `in`/`out` options (a narrowed shape would invalidate `out`'s typed argument).
+`.extend` / `.pick` / `.omit` build a **new** DTO from the base's shape — and the shape is all that carries over. The `in` hook, the `out` hook, subclass methods, and any custom prototype members are intentionally dropped.
+
+The reason is type safety: a different shape invalidates the typed argument of `in`/`out` and may invalidate the bodies of subclass methods (a method that touches `this.password` would `tsc`-pass on a derived class that no longer has `password`). Silently inheriting them would either lie at the type level or crash at runtime.
 
 ```ts
 const BaseDto = ZodDto(z.object({ id: z.uuid(), name: z.string() }));
@@ -119,6 +132,65 @@ const CreateDto = BaseDto.omit({ id: true });
 const NamedOnlyDto = BaseDto.pick({ name: true });
 const WithEmailDto = BaseDto.extend({ email: z.email() });
 ```
+
+### ⚠️ Re-apply `out` for security-sensitive DTOs
+
+If your base DTO uses `out` to strip sensitive fields (`password`, internal IDs, ...), the derived DTO will **not** inherit it — the field can re-leak through `JSON.stringify`. Re-apply `out` (or wrap `pick`/`omit` so the field cannot exist in the derived shape at all):
+
+```ts
+const UserDto = ZodDto(
+  z.object({ id: z.string(), name: z.string(), password: z.string() }),
+  { out: ({ password: _password, ...rest }) => rest },
+);
+
+// ❌ password leaks back — `out` was dropped:
+const PublicDto = UserDto.omit({ id: true });
+
+// ✅ either re-apply `out`...
+const PublicDto2 = ZodDto(
+  z.object({ name: z.string(), password: z.string() }),
+  { out: ({ password: _password, ...rest }) => rest },
+);
+
+// ✅ ...or omit the sensitive field from the shape itself:
+const PublicDto3 = UserDto.omit({ id: true, password: true });
+```
+
+### Re-attach methods on the derived class
+
+If you need methods on the derived DTO, subclass the result of the derivation:
+
+```ts
+class Point extends ZodDto(z.object({ x: z.number(), y: z.number() })) {
+  sum() { return this.x + this.y; }
+}
+
+// ❌ `Point3D.prototype.sum` is undefined — derivations build a fresh class.
+const Point3D = Point.extend({ z: z.number() });
+
+// ✅ Subclass the derivation to add methods on the new shape:
+class Point3DWithSum extends Point.extend({ z: z.number() }) {
+  sum() { return this.x + this.y + this.z; }
+}
+```
+
+### `.partial()` / `.required()` / `.merge()` — wrap in `ZodDto(...)`
+
+`.extend/.pick/.omit` are first-class on a DTO class because they're the most common derivations. Other Zod object methods — `.partial()`, `.required()`, `.merge()`, etc. — are still callable (every Zod schema method is preserved), but they return a plain `ZodObject`, not a DTO. To get a DTO back, wrap once in `ZodDto(...)`:
+
+```ts
+class CreateUserDto extends ZodDto(
+  z.object({ name: z.string().min(2), email: z.email(), age: z.number().int().min(18) }),
+) {}
+
+// CreateUserDto + UpdateUserDto pattern (the class-validator / @nestjs/swagger PartialType analogue):
+class UpdateUserDto extends ZodDto(CreateUserDto.partial()) {}
+
+// Same for `.required()`, `.merge()`, etc.:
+class StrictDto extends ZodDto(CreateUserDto.partial().required()) {}
+```
+
+The wrap is intentional, not boilerplate: it picks up the new shape, applies the per-class instance walker, and re-fires `onCreate` (so Swagger metadata is regenerated on the partial shape — without the wrap you'd get `@ApiProperty` for the original fields).
 
 ## Nested DTOs
 
@@ -146,8 +218,8 @@ try {
   toDto(UserDto, bad);
 } catch (e) {
   if (e instanceof ZodDtoValidationError) {
-    e.issues; // ['email: Invalid email', ...]
-    e.message; // issues joined with '; '
+    e.issues; // ['email: Invalid email', 'age: Too small', ...] — full structured list
+    e.message; // '2 issues: "email: Invalid email" (+1 more)' — short summary, log-friendly
   }
 }
 ```

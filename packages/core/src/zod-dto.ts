@@ -140,16 +140,19 @@ export function ZodDto<T extends z.ZodRawShape>(
   return result;
 }
 
-export function toDto<T extends Omit<ZodDtoClass, 'check'> & (new () => object)>(DtoClass: T, data: unknown[]): InstanceType<T>[];
-export function toDto<T extends Omit<ZodDtoClass, 'check'> & (new () => object)>(DtoClass: T, data: unknown): InstanceType<T>;
-export function toDto<T extends Omit<ZodDtoClass, 'check'> & (new () => object)>(DtoClass: T, data: unknown | unknown[]): InstanceType<T> | InstanceType<T>[] {
+type ToDtoCtor = (new () => object) & { safeParse(data: unknown): z.ZodSafeParseResult<unknown> };
+
+export function toDto<T extends ToDtoCtor>(DtoClass: T, data: unknown[]): InstanceType<T>[];
+export function toDto<T extends ToDtoCtor>(DtoClass: T, data: unknown): InstanceType<T>;
+export function toDto<T extends ToDtoCtor>(DtoClass: T, data: unknown | unknown[]): InstanceType<T> | InstanceType<T>[] {
   const isArray = Array.isArray(data);
   const items = isArray ? data : [data];
 
-  const results = items.map((item) => {
+  const results = items.map((item, index) => {
     const result = DtoClass.safeParse(item);
     if (!result.success) {
-      throw new ZodDtoValidationError(formatZodIssues(result.error.issues));
+      const issues = isArray ? result.error.issues.map((issue) => ({ ...issue, path: [index, ...issue.path] })) : result.error.issues;
+      throw new ZodDtoValidationError(formatZodIssues(issues));
     }
 
     return result.data as InstanceType<T>;

@@ -118,6 +118,32 @@ describe('applySwaggerDecorators', () => {
     });
   });
 
+  describe('describe()', () => {
+    it('forwards .describe() text into OpenAPI description', () => {
+      const { so } = applySwaggerDecorators(z.string().describe('Primary contact'));
+      expect(so).toMatchObject({ type: 'string', description: 'Primary contact' });
+    });
+
+    it('describe() on inner of optional propagates', () => {
+      const { so, selfRequired } = applySwaggerDecorators(z.string().describe('Primary contact').optional());
+      expect(selfRequired).toBe(false);
+      expect(so).toMatchObject({ type: 'string', description: 'Primary contact' });
+    });
+
+    it('describe() on the wrapper (optional) is also picked up', () => {
+      const { so, selfRequired } = applySwaggerDecorators(z.string().optional().describe('Primary contact'));
+      expect(selfRequired).toBe(false);
+      expect(so).toMatchObject({ type: 'string', description: 'Primary contact' });
+    });
+
+    it('describe() on a DTO field lands in @ApiProperty metadata', () => {
+      class UserDto extends ZodDto(z.object({ email: z.email().describe('Login email') })) {}
+      applySwaggerDecorators(UserDto);
+      const meta = Reflect.getMetadata('swagger/apiModelProperties', UserDto.prototype, 'email') as { description?: string };
+      expect(meta).toMatchObject({ description: 'Login email' });
+    });
+  });
+
   describe('wrappers', () => {
     it('optional marks selfRequired as false', () => {
       const { selfRequired } = applySwaggerDecorators(z.string().optional());
@@ -129,9 +155,93 @@ describe('applySwaggerDecorators', () => {
       expect(so).toEqual({ type: 'string', nullable: true });
     });
 
-    it('default marks selfRequired as false', () => {
-      const { selfRequired } = applySwaggerDecorators(z.string().default('hello'));
+    it('default marks selfRequired as false and forwards default value', () => {
+      const { so, selfRequired } = applySwaggerDecorators(z.string().default('hello'));
       expect(selfRequired).toBe(false);
+      expect(so).toMatchObject({ type: 'string', default: 'hello' });
+    });
+
+    it('default forwards numeric value', () => {
+      const { so } = applySwaggerDecorators(z.number().default(42));
+      expect(so).toMatchObject({ type: 'number', default: 42 });
+    });
+
+    it('default forwards on enum', () => {
+      const { so } = applySwaggerDecorators(z.enum(['admin', 'user', 'guest']).default('user'));
+      expect(so).toMatchObject({ enum: ['admin', 'user', 'guest'], default: 'user' });
+    });
+
+    it('default(() => value) — thunk is resolved once at generation time', () => {
+      // Zod 4 exposes `defaultValue` as a getter that re-invokes the thunk on each access.
+      // We snapshot the resolved value into the OpenAPI spec at decoration time. Anything
+      // non-stable (Date.now(), randomUUID(), ...) freezes to whatever the first call returned.
+      let counter = 0;
+      const schema = z.string().default(() => `auto-${++counter}`);
+      const before = counter;
+      const { so } = applySwaggerDecorators(schema);
+      // The thunk fires exactly once during decoration:
+      expect(counter).toBe(before + 1);
+      expect(so).toMatchObject({ type: 'string', default: `auto-${counter}` });
+    });
+
+    describe('thunk default does not get re-evaluated across', () => {
+      it('JS subclass of a DTO (class Child extends Parent {})', () => {
+        let counter = 0;
+        class Parent extends ZodDto(z.object({ x: z.string().default(() => `auto-${++counter}`) })) {}
+        class Child extends Parent {
+          method() {
+            return this.x;
+          }
+        }
+        applySwaggerDecorators(Parent);
+        applySwaggerDecorators(Child);
+
+        const pMeta = Reflect.getMetadata('swagger/apiModelProperties', Parent.prototype, 'x') as { default?: unknown };
+        const cMeta = Reflect.getMetadata('swagger/apiModelProperties', Child.prototype, 'x') as { default?: unknown };
+        expect(counter).toBe(1);
+        expect(pMeta.default).toBe('auto-1');
+        expect(cMeta?.default ?? pMeta.default).toBe('auto-1');
+      });
+
+      it('nesting via z.array(Parent)', () => {
+        let counter = 0;
+        class Parent extends ZodDto(z.object({ x: z.string().default(() => `auto-${++counter}`) })) {}
+        class AnotherOne extends ZodDto(z.object({ arr: z.array(Parent) })) {}
+
+        applySwaggerDecorators(Parent);
+        applySwaggerDecorators(AnotherOne);
+        expect(counter).toBe(1);
+        const pMeta = Reflect.getMetadata('swagger/apiModelProperties', Parent.prototype, 'x') as { default?: unknown };
+        expect(pMeta.default).toBe('auto-1');
+      });
+
+      it('derivation via Parent.extend({...})', () => {
+        let counter = 0;
+        class Parent extends ZodDto(z.object({ x: z.string().default(() => `auto-${++counter}`) })) {}
+        class Extended extends Parent.extend({ y: z.int() }) {}
+
+        applySwaggerDecorators(Parent);
+        applySwaggerDecorators(Extended);
+
+        const pMeta = Reflect.getMetadata('swagger/apiModelProperties', Parent.prototype, 'x') as { default?: unknown };
+        const eMeta = Reflect.getMetadata('swagger/apiModelProperties', Extended.prototype, 'x') as { default?: unknown };
+        expect(counter).toBe(1);
+        expect(pMeta.default).toBe('auto-1');
+        expect(eMeta.default).toBe('auto-1');
+      });
+    });
+
+    it('default + @ApiProperty: a DTO field gets the default in metadata', () => {
+      class WithRoleDto extends ZodDto(
+        z.object({
+          role: z.enum(['admin', 'user', 'guest']).default('user'),
+        }),
+      ) {}
+      // Trigger decoration via the on-create hook (registered by importing nestjs entrypoint).
+      // Here we apply directly to assert the SchemaObject shape:
+      applySwaggerDecorators(WithRoleDto);
+      const meta = Reflect.getMetadata('swagger/apiModelProperties', WithRoleDto.prototype, 'role') as { default?: unknown };
+      expect(meta).toMatchObject({ default: 'user' });
     });
 
     it('null schema', () => {

@@ -23,7 +23,7 @@ import { Body, Controller, Post } from '@nestjs/common';
 import { ZodDto } from '@voznov/zod-dto';
 import { z } from 'zod';
 
-const CreateUserDto = ZodDto(z.object({ name: z.string(), email: z.email() }));
+class CreateUserDto extends ZodDto(z.object({ name: z.string(), email: z.email() })) {}
 
 @Controller('users')
 export class UsersController {
@@ -43,6 +43,12 @@ export class UsersController {
 Importing this package side-effect-registers an `onCreate` hook that decorates every DTO class with `@ApiProperty` metadata based on its Zod schema — no manual decorators required. **Import order doesn't matter**: DTOs created before `@voznov/zod-dto-nestjs` was imported are retroactively decorated at hook registration, so `import '@voznov/zod-dto-nestjs'` from anywhere in the app works.
 
 Supported shapes: scalars, objects (nested), arrays, tuples, records, enums, literals, unions (including discriminated), intersections, optional/nullable/default wrappers, and nested DTO references (via `oneOf` + `ApiExtraModels`).
+
+`.default(value)` is forwarded to the OpenAPI `default` keyword. For lazy defaults (`.default(() => ...)`), the thunk is invoked **once** at decoration time and the resolved value is frozen into the spec — use a stable thunk (don't put `Date.now()` / `randomUUID()` here unless you want the server-startup value baked into your docs).
+
+`.describe(text)` is forwarded to the OpenAPI `description` keyword. Works on the wrapper or on the inner type — `z.string().describe('Login email').optional()` and `z.string().optional().describe('Login email')` both end up with `description: 'Login email'` in the spec.
+
+`.refine(...)` validators run at request-validation time but are **not** reflected in the spec — JSON Schema can't express custom predicates, and a single `description` for a chain of refines (`.refine(...).refine(...).refine(...)`) would be ambiguous. Put human-readable docs in `.describe(...)` instead.
 
 ## Custom error response
 

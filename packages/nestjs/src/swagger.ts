@@ -20,7 +20,24 @@ const leaf = (so: SchemaObject): { so: SchemaObject; selfRequired: boolean; inne
 
 const decoratedDtoClasses = new Set<ZodDtoClass>();
 
+// Snapshot resolved default per schema instance — Zod's `defaultValue` is a getter that
+// re-invokes the thunk on every access. Without this cache, the same `ZodDefault` schema
+// surfaced through two paths (JS subclass, `.extend/.pick/.omit`, shared field reuse, ...)
+// would emit a different value into each occurrence in the spec.
+const defaultValueCache = new WeakMap<z.ZodDefault, unknown>();
+
 export const applySwaggerDecorators = (schema: z.core.$ZodType): { so: SchemaObject; selfRequired: boolean; innerSchemas: Set<ZodDtoClass> } => {
+  const result = applyDecoratorsImpl(schema);
+  // `.describe(text)` → OpenAPI `description`. Read at every recursion level so the text
+  // lands in the spec whether it's set on a wrapper (`.optional().describe(...)`) or on
+  // the inner type (`.describe(...).optional()`).
+  const description = (schema as z.ZodType).description;
+  if (description) result.so = { ...result.so, description };
+
+  return result;
+};
+
+const applyDecoratorsImpl = (schema: z.core.$ZodType): { so: SchemaObject; selfRequired: boolean; innerSchemas: Set<ZodDtoClass> } => {
   // --- Objects ---
 
   if (schema instanceof z.ZodObject) {
@@ -31,8 +48,8 @@ export const applySwaggerDecorators = (schema: z.core.$ZodType): { so: SchemaObj
     const properties: Record<string, SchemaObject> = {};
     const required: string[] = [];
     const innerSchemas = new Set<ZodDtoClass>();
-    Object.entries(schema.shape).forEach(([key, fieldSchema]) => {
-      const { so, selfRequired, innerSchemas: innerSchemas_ } = applySwaggerDecorators(fieldSchema as z.ZodType);
+    Object.entries<z.core.$ZodType>(schema.shape).forEach(([key, fieldSchema]) => {
+      const { so, selfRequired, innerSchemas: innerSchemas_ } = applySwaggerDecorators(fieldSchema);
       properties[key] = so;
       innerSchemas_.forEach((innerSchema) => innerSchemas.add(innerSchema));
       if (selfRequired) {
@@ -54,7 +71,7 @@ export const applySwaggerDecorators = (schema: z.core.$ZodType): { so: SchemaObj
   }
 
   if (schema instanceof z.ZodRecord) {
-    const { so } = applySwaggerDecorators(schema._zod.def.valueType as z.ZodType);
+    const { so } = applySwaggerDecorators(schema._zod.def.valueType);
 
     return leaf({ type: 'object', additionalProperties: so.oneOf?.length === 1 ? so.oneOf[0] : so });
   }
@@ -66,7 +83,10 @@ export const applySwaggerDecorators = (schema: z.core.$ZodType): { so: SchemaObj
   }
 
   if (schema instanceof z.ZodDefault) {
-    return { ...applySwaggerDecorators(schema.unwrap()), selfRequired: false };
+    const inner = applySwaggerDecorators(schema.unwrap());
+    if (!defaultValueCache.has(schema)) defaultValueCache.set(schema, schema._zod.def.defaultValue);
+
+    return { ...inner, so: { ...inner.so, default: defaultValueCache.get(schema) }, selfRequired: false };
   }
 
   if (schema instanceof z.ZodReadonly || schema instanceof z.ZodLazy || schema instanceof z.ZodCatch) {

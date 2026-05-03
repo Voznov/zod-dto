@@ -102,9 +102,33 @@ describe('ZodDto', () => {
       expect(parsed.success).toBe(true);
       if (parsed.success) {
         expect(parsed.data).toBeInstanceOf(MyPoint);
-        // Runtime is a MyPoint; Zod's inferred type is plain {x,y}, so cast to reach .label().
+        expect(parsed.data.x).toBe(1);
         expect((parsed.data as InstanceType<typeof MyPoint>).label()).toBe('(1, 2)');
       }
+    });
+
+    it('direct parse on the subclass returns an instance of the subclass', () => {
+      const parsed = MyPoint.parse({ x: 1, y: 2 });
+      expect(parsed).toBeInstanceOf(MyPoint);
+      expect(parsed.x).toBe(1);
+      expect((parsed as InstanceType<typeof MyPoint>).label()).toBe('(1, 2)');
+    });
+
+    it('direct safeParseAsync on the subclass returns an instance of the subclass', async () => {
+      const parsed = await MyPoint.safeParseAsync({ x: 1, y: 2 });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data).toBeInstanceOf(MyPoint);
+        expect(parsed.data.x).toBe(1);
+        expect((parsed.data as InstanceType<typeof MyPoint>).label()).toBe('(1, 2)');
+      }
+    });
+
+    it('direct parseAsync on the subclass returns an instance of the subclass', async () => {
+      const parsed = await MyPoint.parseAsync({ x: 1, y: 2 });
+      expect(parsed).toBeInstanceOf(MyPoint);
+      expect(parsed.x).toBe(1);
+      expect((parsed as InstanceType<typeof MyPoint>).label()).toBe('(1, 2)');
     });
 
     // Inferred types don't carry subclass methods through nested schemas (Zod infers the
@@ -158,6 +182,12 @@ describe('ZodDto', () => {
         // No casts: runtime + types agree that elements are SelfTypedPoint instances.
         expect(result.points[0].label()).toBe('(1, 2)');
         expect(result.points[1].label()).toBe('(3, 4)');
+      });
+
+      it('direct toDto(X, raw) compiles and returns an instance', () => {
+        const p = toDto(SelfTypedPoint, { x: 3, y: 4 });
+        expect(p).toBeInstanceOf(SelfTypedPoint);
+        expect(p.label()).toBe('(3, 4)');
       });
 
       it('propagates into a nested DTO field without casts', () => {

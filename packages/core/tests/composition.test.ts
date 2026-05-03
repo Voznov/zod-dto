@@ -19,8 +19,8 @@ describe('composition', () => {
     });
 
     it('includes both base and extended fields', () => {
-      const result = toDto(ExtendedDto, { id: 1, name: 'Alice', role: 'admin', email: 'a@b.com' });
-      expect(result).toEqual({ id: 1, name: 'Alice', role: 'admin', email: 'a@b.com' });
+      const result = toDto(ExtendedDto, { id: 1, name: 'Alice', role: 'admin', email: 'ada@example.comom' });
+      expect(result).toEqual({ id: 1, name: 'Alice', role: 'admin', email: 'ada@example.comom' });
     });
 
     it('rejects data missing extended field', () => {
@@ -67,8 +67,8 @@ describe('composition', () => {
   describe('chained composition', () => {
     it('.extend() then .omit()', () => {
       const Dto = BaseDto.extend({ email: z.string() }).omit({ role: true });
-      const result = toDto(Dto, { id: 1, name: 'Alice', email: 'a@b.com' });
-      expect(result).toEqual({ id: 1, name: 'Alice', email: 'a@b.com' });
+      const result = toDto(Dto, { id: 1, name: 'Alice', email: 'ada@example.comom' });
+      expect(result).toEqual({ id: 1, name: 'Alice', email: 'ada@example.comom' });
     });
 
     it('.pick() then .extend()', () => {
@@ -115,6 +115,100 @@ describe('composition', () => {
         ],
       });
       expect(result.members).toHaveLength(2);
+    });
+  });
+
+  describe('what derived DTOs do NOT inherit (by design)', () => {
+    it('subclass methods are dropped at runtime by .extend/.pick/.omit', () => {
+      class Point extends ZodDto(z.object({ x: z.number(), y: z.number() })) {
+        label() {
+          return `(${this.x}, ${this.y})`;
+        }
+      }
+
+      const Extended = Point.extend({ z: z.number() });
+      const Picked = Point.pick({ x: true });
+      const Omitted = Point.omit({ y: true });
+
+      const e = toDto(Extended, { x: 1, y: 2, z: 3 });
+      const p = toDto(Picked, { x: 1 });
+      const o = toDto(Omitted, { x: 1 });
+
+      expect((e as { label?: unknown }).label).toBeUndefined();
+      expect((p as { label?: unknown }).label).toBeUndefined();
+      expect((o as { label?: unknown }).label).toBeUndefined();
+    });
+
+    it('subclass methods are also absent from the derived type', () => {
+      class Point extends ZodDto(z.object({ x: z.number(), y: z.number() })) {
+        label() {
+          return `(${this.x}, ${this.y})`;
+        }
+      }
+
+      const Extended = Point.extend({ z: z.number() });
+      const Picked = Point.pick({ x: true });
+      const Omitted = Point.omit({ y: true });
+
+      const e = toDto(Extended, { x: 1, y: 2, z: 3 });
+      const p = toDto(Picked, { x: 1 });
+      const o = toDto(Omitted, { x: 1 });
+
+      // @ts-expect-error — `label` is not on the derived class's instance type
+      e.label;
+      // @ts-expect-error
+      p.label;
+      // @ts-expect-error
+      o.label;
+    });
+
+    it('out hook is dropped by .extend/.pick/.omit', () => {
+      const Secret = ZodDto(z.object({ id: z.string(), password: z.string() }), {
+        out: ({ password: _password, ...rest }) => rest,
+      });
+
+      const base = toDto(Secret, { id: '1', password: 'hunter2' });
+      const baseJson = JSON.parse(JSON.stringify(base));
+      expect(baseJson).not.toHaveProperty('password'); // out strips password from JSON
+      expect(baseJson).toEqual({ id: '1' });
+
+      const Public = Secret.omit({ id: true });
+      const leaked = toDto(Public, { password: 'hunter2' });
+      const leakedJson = JSON.parse(JSON.stringify(leaked));
+      expect(leakedJson).toHaveProperty('password', 'hunter2'); // out lost — re-leaks
+      expect(leakedJson).toEqual({ password: 'hunter2' });
+    });
+  });
+
+  describe('partial / required / merge via ZodDto re-wrap', () => {
+    class CreateUserDto extends ZodDto(
+      z.object({
+        name: z.string().min(2),
+        email: z.email(),
+        age: z.number().int().min(18),
+      }),
+    ) {}
+
+    it('partial(): wrap result in ZodDto to get a DTO class', () => {
+      class UpdateUserDto extends ZodDto(CreateUserDto.partial()) {}
+      const ok = toDto(UpdateUserDto, { name: 'Ada' });
+      expect(ok).toBeInstanceOf(UpdateUserDto);
+      expect(ok).toEqual({ name: 'Ada' });
+    });
+
+    it('required(): roundtrip via ZodDto wrap', () => {
+      class StrictDto extends ZodDto(CreateUserDto.partial().required()) {}
+      expect(() => toDto(StrictDto, { name: 'Ada' })).toThrow();
+      const ok = toDto(StrictDto, { name: 'Ada', email: 'ada@example.com', age: 30 });
+      expect(ok).toBeInstanceOf(StrictDto);
+    });
+
+    it('merge two DTO shapes via ZodDto wrap', () => {
+      class Audit extends ZodDto(z.object({ createdAt: z.string(), createdBy: z.string() })) {}
+      class AuditedUser extends ZodDto(z.object({ ...CreateUserDto.shape, ...Audit.shape })) {}
+      const u = toDto(AuditedUser, { name: 'Ada', email: 'ada@example.com', age: 30, createdAt: '2026-01-01', createdBy: 'sys' });
+      expect(u).toBeInstanceOf(AuditedUser);
+      expect(u.createdBy).toBe('sys');
     });
   });
 
