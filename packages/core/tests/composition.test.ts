@@ -210,6 +210,17 @@ describe('composition', () => {
       expect(u).toBeInstanceOf(AuditedUser);
       expect(u.createdBy).toBe('sys');
     });
+
+    // Zod 4.4 moved most methods (partial/required/merge/default/describe/refine/...) from
+    // the schema instance to its prototype. The Proxy in `ZodDto(...)` falls back to the
+    // schema for missing properties, so the full Zod surface stays reachable on every DTO
+    // class regardless of the Zod minor version.
+    it('exposes Zod prototype methods as DTO class statics (Zod 4.4 compatibility)', () => {
+      const surface = ['partial', 'required', 'merge', 'default', 'describe', 'meta', 'refine', 'transform', 'pipe', 'readonly', 'keyof', 'catch', 'check'] as const;
+      for (const name of surface) {
+        expect(typeof (CreateUserDto as unknown as Record<string, unknown>)[name]).toBe('function');
+      }
+    });
   });
 
   // Regression: ZodDto wrapping an already-DTO chain used to hang tsc on chained

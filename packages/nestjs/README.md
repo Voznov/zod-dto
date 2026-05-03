@@ -44,11 +44,34 @@ Importing this package side-effect-registers an `onCreate` hook that decorates e
 
 Supported shapes: scalars, objects (nested), arrays, tuples, records, enums, literals, unions (including discriminated), intersections, optional/nullable/default wrappers, and nested DTO references (via `oneOf` + `ApiExtraModels`).
 
-`.default(value)` is forwarded to the OpenAPI `default` keyword. For lazy defaults (`.default(() => ...)`), the thunk is invoked **once** at decoration time and the resolved value is frozen into the spec — use a stable thunk (don't put `Date.now()` / `randomUUID()` here unless you want the server-startup value baked into your docs).
+`.default(value)` is forwarded to the OpenAPI `default` keyword.
+
+> ⚠️ **Lazy defaults are frozen at decoration time.** For `.default(() => ...)`, the thunk is invoked **once** when the swagger metadata is generated, and the resolved value is baked into the spec. Anything non-stable — `Date.now()`, `randomUUID()`, `new Date()` — will freeze at the value the server happened to produce on startup, and every endpoint's example in your docs will show that one stale value. Use a stable thunk, or a literal default.
 
 `.describe(text)` is forwarded to the OpenAPI `description` keyword. Works on the wrapper or on the inner type — `z.string().describe('Login email').optional()` and `z.string().optional().describe('Login email')` both end up with `description: 'Login email'` in the spec.
 
 `.refine(...)` validators run at request-validation time but are **not** reflected in the spec — JSON Schema can't express custom predicates, and a single `description` for a chain of refines (`.refine(...).refine(...).refine(...)`) would be ambiguous. Put human-readable docs in `.describe(...)` instead.
+
+### Recursive schemas (`z.lazy` / `lazyDto`)
+
+For self-referential shapes (comment trees, file trees, ...) wrap the recursion in a DTO and reference it back via `lazyDto` — the Swagger walker emits a proper `$ref` at the cycle, and `lazyDto` keeps TypeScript from tripping over the circular self-reference:
+
+```ts
+import { lazyDto, ZodDto } from '@voznov/zod-dto';
+
+class CategoryDto extends ZodDto(
+  z.object({
+    name: z.string(),
+    children: z.array(lazyDto<CategoryDto>(() => CategoryDto)),
+  }),
+) {}
+// → children items become `$ref: '#/components/schemas/CategoryDto'`
+// → at the type level, `instance.children[0].name` is `string`, not `unknown`.
+```
+
+`lazyDto<T>(thunk)` is a thin wrapper over `z.lazy` with two type-level tweaks: the explicit generic carries the *instance type* `T`, and the thunk argument is typed `() => any` so TS skips body return-type inference (the source of the circular-class error). Plain `z.lazy(...)` works at runtime too, but you'd need a separate `type Category = {...}` + `(): z.ZodType<Category>` annotation to keep the inferred field types non-`unknown`.
+
+If the recursive position resolves to an anonymous `ZodObject` (no DTO wrap), the walker emits an empty `{}` placeholder there — it won't crash, but Swagger UI will show `any` instead of the recursive structure. Wrap it in `ZodDto` if you want the cycle visible in your docs.
 
 ## Custom error response
 

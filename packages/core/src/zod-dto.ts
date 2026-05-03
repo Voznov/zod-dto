@@ -34,7 +34,8 @@ const perClassZod = new WeakMap<new () => object, object>();
 
 type ZodRunMethod = (payload: { value: unknown; issues: unknown[] }, ctx: unknown) => unknown;
 
-export function ZodDto<T extends z.ZodRawShape>(objectSchema: ZodDtoClass<z.ZodObject<T>>, options?: ZodDtoOptions<T>): ZodDtoClass<z.ZodObject<T>>;
+// `ZodDto(dto)` is an idempotent passthrough; the no-options overload exists so chained derivations don't blow up tsc
+export function ZodDto<T extends z.ZodRawShape>(objectSchema: ZodDtoClass<z.ZodObject<T>>): ZodDtoClass<z.ZodObject<T>>;
 export function ZodDto<T extends z.ZodRawShape>(objectSchema: z.ZodObject<T>, options?: ZodDtoOptions<T>): ZodDtoClass<z.ZodObject<T>>;
 export function ZodDto<Self>(): <T extends z.ZodRawShape>(objectSchema: z.ZodObject<T>, options?: ZodDtoOptions<T>) => ZodDtoClass<z.ZodObject<T>, Self>;
 export function ZodDto<T extends z.ZodRawShape>(
@@ -57,14 +58,6 @@ export function ZodDto<T extends z.ZodRawShape>(
   }
 
   const result = Dto as unknown as ZodDtoClass<z.ZodObject<T>>;
-
-  // Copy schema properties onto the DTO class — except `prototype` (non-configurable on
-  // classes) and `_zod` (we install a per-class getter below so that subclasses and base
-  // each resolve to their own `_zod` with a back-reference to the actual called class).
-  const descriptors: Record<string, PropertyDescriptor> = Object.getOwnPropertyDescriptors(effectiveSchema);
-  delete descriptors['prototype'];
-  delete descriptors['_zod'];
-  Object.defineProperties(result, descriptors);
 
   // Per-class `_zod`: Zod's internal nested parse (`element._zod.run(...)`) reads `_zod`
   // off whichever schema holds it — for `z.array(MyPoint)` that's `MyPoint`. Making `_zod`
@@ -107,10 +100,10 @@ export function ZodDto<T extends z.ZodRawShape>(
     return z.core.parse(this, data, params);
   };
   result.safeParseAsync = async function safeParseAsync(this, data, params) {
-    return (await z.core.safeParseAsync(this, data, params)) as Awaited<ReturnType<typeof result.safeParseAsync>>;
+    return z.core.safeParseAsync(this, data, params) as ReturnType<typeof result.safeParseAsync>;
   };
   result.parseAsync = async function parseAsync(this, data, params) {
-    return await z.core.parseAsync(this, data, params);
+    return z.core.parseAsync(this, data, params);
   };
 
   // Override Zod wrapper methods so they reference `result` (the DTO class) directly.
@@ -132,13 +125,48 @@ export function ZodDto<T extends z.ZodRawShape>(
   result.omit = (mask) => ZodDto(objectSchema.omit(mask));
   result.pick = (mask) => ZodDto(objectSchema.pick(mask));
 
-  createdDtos.push(result as ZodDtoClass);
+  // Wrap the class in a Proxy so any Zod method defined on the schema's *prototype*
+  // (Zod 4.4+ moved most methods there: `partial`, `required`, `merge`, `default`, etc.)
+  // is reachable via property lookup with `this` bound to the schema. Own properties on
+  // the DTO class — including all our explicit overrides above — take precedence.
+  const proxy = new Proxy(result, {
+    get(target, prop, receiver) {
+      if (prop in target) return Reflect.get(target, prop, receiver);
+      if (prop in effectiveSchema) {
+        const v = (effectiveSchema as unknown as Record<string | symbol, unknown>)[prop as string];
+
+        return typeof v === 'function' ? v.bind(effectiveSchema) : v;
+      }
+
+      return undefined;
+    },
+  }) as ZodDtoClass<z.ZodObject<T>>;
+
+  createdDtos.push(proxy as ZodDtoClass);
   for (const hook of onCreateHooks) {
-    hook(result as ZodDtoClass);
+    hook(proxy as ZodDtoClass);
   }
 
-  return result;
+  return proxy;
 }
+
+/**
+ * `z.lazy(...)` with an explicit-generic shortcut so a DTO can reference itself
+ * without falling into TS's circular-base-class error. The thunk is typed
+ * `() => any` to skip body return-type inference; the explicit generic carries
+ * the *instance type* the schema parses to.
+ *
+ * ```ts
+ * class CategoryDto extends ZodDto(
+ *   z.object({
+ *     name: z.string(),
+ *     children: z.array(lazyDto<CategoryDto>(() => CategoryDto)),
+ *   }),
+ * ) {}
+ * ```
+ */
+
+export const lazyDto = <T>(thunk: () => any): z.ZodType<T> => z.lazy(thunk);
 
 type ToDtoCtor = (new () => object) & { safeParse(data: unknown): z.ZodSafeParseResult<unknown> };
 

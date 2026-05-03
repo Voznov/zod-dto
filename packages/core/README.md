@@ -140,7 +140,7 @@ If your base DTO uses `out` to strip sensitive fields (`password`, internal IDs,
 ```ts
 const UserDto = ZodDto(
   z.object({ id: z.string(), name: z.string(), password: z.string() }),
-  { out: ({ password: _password, ...rest }) => rest },
+  { out: ({ password, ...rest }) => rest },
 );
 
 // ❌ password leaks back — `out` was dropped:
@@ -149,7 +149,7 @@ const PublicDto = UserDto.omit({ id: true });
 // ✅ either re-apply `out`...
 const PublicDto2 = ZodDto(
   z.object({ name: z.string(), password: z.string() }),
-  { out: ({ password: _password, ...rest }) => rest },
+  { out: ({ password, ...rest }) => rest },
 );
 
 // ✅ ...or omit the sensitive field from the shape itself:
@@ -191,6 +191,24 @@ class StrictDto extends ZodDto(CreateUserDto.partial().required()) {}
 ```
 
 The wrap is intentional, not boilerplate: it picks up the new shape, applies the per-class instance walker, and re-fires `onCreate` (so Swagger metadata is regenerated on the partial shape — without the wrap you'd get `@ApiProperty` for the original fields).
+
+### `ZodDto(dto)` is idempotent — `ZodDto(dto, options)` is not supported
+
+Passing an existing DTO to `ZodDto(...)` returns the same class — it's a no-op, intentionally, so chained derivations (`class X extends ZodDto(Base.omit({...}))`) don't blow up `tsc` on circular type unification.
+
+Re-wrapping a DTO with new `in`/`out` options is **not** supported by `ZodDto(dto, options)` — the no-options overload is the only one that accepts a DTO. If you need fresh options on an existing DTO's shape, wrap the underlying schema instead:
+
+```ts
+class UserDto extends ZodDto(z.object({ id: z.string(), name: z.string(), password: z.string() })) {}
+
+// ❌ Type-error: only `ZodDto(dto)` (no options) is allowed for a DTO input.
+// const Safe = ZodDto(UserDto, { out: ({ password, ...rest }) => rest });
+
+// ✅ Re-wrap the raw schema:
+class SafeUserDto extends ZodDto(z.object(UserDto.shape), {
+  out: ({ password, ...rest }) => rest,
+}) {}
+```
 
 ## Nested DTOs
 
@@ -282,6 +300,7 @@ const ProfileDto = ZodDto(z.object({ userId: z.uuid(), secret: z.string() }), {
 | `ZodDtoValidationError`    | `{ issues: string[] }` thrown by `toDto`.                                          |
 | `formatZodIssues(issues)`  | Format `z.core.$ZodIssue[]` into `path: message` strings.                          |
 | `isZodDtoClass(value)`     | Type guard.                                                                        |
+| `lazyDto<T>(thunk)`        | Self-referential `z.lazy` wrapper. `lazyDto<CategoryDto>(() => CategoryDto)` sidesteps TS's circular-base-class error so a DTO can reference itself in its own shape (`children: z.array(lazyDto<...>(...))`). |
 | `registerOnCreate(hook)`   | Register a callback fired for every DTO class created. Also fires retroactively for DTOs that existed before registration, so extension packages (Swagger etc.) work regardless of import order. |
 
 ## License

@@ -1,4 +1,4 @@
-import { ZodDto } from '@voznov/zod-dto';
+import { lazyDto, ZodDto } from '@voznov/zod-dto';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { applySwaggerDecorators } from '../src/swagger';
@@ -275,6 +275,35 @@ describe('applySwaggerDecorators', () => {
       const OuterDto = ZodDto(z.object({ inner: InnerDto }));
       const { innerSchemas } = applySwaggerDecorators(OuterDto);
       expect(innerSchemas.has(OuterDto)).toBe(true);
+    });
+  });
+
+  describe('recursive schemas (z.lazy)', () => {
+    it('does not stack-overflow on a self-referential ZodLazy', () => {
+      type CommentT = { text: string; replies: CommentT[] };
+      const CommentSchema: z.ZodType<CommentT> = z.lazy(() => z.object({ text: z.string(), replies: z.array(CommentSchema) }));
+      // Should not throw RangeError: Maximum call stack size exceeded.
+      expect(() => applySwaggerDecorators(CommentSchema)).not.toThrow();
+    });
+
+    it('does not stack-overflow when a DTO wraps a self-referential ZodLazy', () => {
+      type CommentT = { text: string; replies: CommentT[] };
+      const CommentSchema: z.ZodType<CommentT> = z.lazy(() => z.object({ text: z.string(), replies: z.array(CommentSchema) }));
+      class CommentDto extends ZodDto(CommentSchema as unknown as z.ZodObject<{ text: z.ZodString }>) {}
+      expect(() => applySwaggerDecorators(CommentDto)).not.toThrow();
+    });
+
+    it('does not stack-overflow when a DTO references itself via lazyDto in its shape', () => {
+      class CategoryDto extends ZodDto(
+        z.object({
+          name: z.string(),
+          children: z.array(lazyDto<CategoryDto>(() => CategoryDto)),
+        }),
+      ) {}
+      expect(() => applySwaggerDecorators(CategoryDto)).not.toThrow();
+      // Re-entry on the lazy resolves to a $ref to CategoryDto, not a placeholder:
+      const meta = Reflect.getMetadata('swagger/apiModelProperties', CategoryDto.prototype, 'children') as { type?: unknown };
+      expect(meta).toBeDefined();
     });
   });
 

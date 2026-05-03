@@ -26,6 +26,10 @@ const decoratedDtoClasses = new Set<ZodDtoClass>();
 // would emit a different value into each occurrence in the spec.
 const defaultValueCache = new WeakMap<z.ZodDefault, unknown>();
 
+// `z.lazy(() => self)` is the only way to introduce a real cycle in a Zod schema graph.
+// Track each ZodLazy currently being walked so we can break re-entry without overflowing.
+const lazyInProgress = new Set<z.ZodLazy>();
+
 export const applySwaggerDecorators = (schema: z.core.$ZodType): { so: SchemaObject; selfRequired: boolean; innerSchemas: Set<ZodDtoClass> } => {
   const result = applyDecoratorsImpl(schema);
   // `.describe(text)` → OpenAPI `description`. Read at every recursion level so the text
@@ -89,7 +93,26 @@ const applyDecoratorsImpl = (schema: z.core.$ZodType): { so: SchemaObject; selfR
     return { ...inner, so: { ...inner.so, default: defaultValueCache.get(schema) }, selfRequired: false };
   }
 
-  if (schema instanceof z.ZodReadonly || schema instanceof z.ZodLazy || schema instanceof z.ZodCatch) {
+  if (schema instanceof z.ZodLazy) {
+    // `z.lazy(() => self)` is the only way Zod schemas can carry an actual cycle.
+    // Track each ZodLazy instance currently being walked; on re-entry, emit a $ref
+    // back to the DTO that the lazy resolves to (if any), or a permissive `{}` as a
+    // last resort for anonymous self-referential trees.
+    if (lazyInProgress.has(schema)) {
+      const inner = schema.unwrap();
+      if (isZodDtoClass(inner)) return { so: { oneOf: refs(inner) }, selfRequired: true, innerSchemas: new Set([inner]) };
+
+      return leaf({});
+    }
+    lazyInProgress.add(schema);
+    try {
+      return applySwaggerDecorators(schema.unwrap());
+    } finally {
+      lazyInProgress.delete(schema);
+    }
+  }
+
+  if (schema instanceof z.ZodReadonly || schema instanceof z.ZodCatch) {
     return applySwaggerDecorators(schema.unwrap());
   }
 
