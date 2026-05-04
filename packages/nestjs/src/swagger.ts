@@ -180,7 +180,8 @@ const applyDecoratorsImpl = (schema: z.core.$ZodType): { so: SchemaObject; selfR
         const first = patterns ? [...patterns][0] : undefined;
         if (first) so.pattern = first.source;
       } else {
-        so.format = fmt;
+        // Zod's `iso.datetime()` reports `format: 'datetime'`; OpenAPI/JSON Schema spell it `date-time`.
+        so.format = fmt === 'datetime' ? 'date-time' : fmt;
       }
     }
 

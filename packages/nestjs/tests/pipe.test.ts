@@ -73,4 +73,9 @@ describe('ZodValidationPipe', () => {
     // Verify that isZodDtoClass works correctly with the DTO
     expect(isZodDtoClass(UserDto)).toBe(true);
   });
+
+  it('rejects array payload — controller param is a single DTO, not an array', () => {
+    expect(() => pipe.transform([], makeMeta(UserDto))).toThrow(BadRequestException);
+    expect(() => pipe.transform([{ name: 'Alice', age: 30 }], makeMeta(UserDto))).toThrow(BadRequestException);
+  });
 });

@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, type PipeTransform } from '@nestjs/common';
 import { type ArgumentMetadata } from '@nestjs/common/interfaces';
-import { isZodDtoClass, toDto, ZodDtoValidationError } from '@voznov/zod-dto';
+import { formatZodIssues, isZodDtoClass } from '@voznov/zod-dto';
 
 export interface ZodValidationPipeOptions {
   createError?: (issues: string[]) => Error;
@@ -19,13 +19,11 @@ export class ZodValidationPipe implements PipeTransform {
       return value;
     }
 
-    try {
-      return toDto(metatype, value);
-    } catch (error) {
-      if (error instanceof ZodDtoValidationError) {
-        throw this.createError(error.issues);
-      }
-      throw error;
+    const result = metatype.safeParse(value);
+    if (!result.success) {
+      throw this.createError(formatZodIssues(result.error.issues));
     }
+
+    return result.data;
   }
 }

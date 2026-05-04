@@ -44,9 +44,9 @@ if (r.success) r.data instanceof UserDto; // true
 Runs as `z.preprocess` before validation. Schema-embedded, so nested DTOs apply their own `in` during a parent's `safeParse`.
 
 ```ts
-const UserDto = ZodDto(z.object({ userId: z.number(), firstName: z.string() }), {
+class UserDto extends ZodDto(z.object({ userId: z.number(), firstName: z.string() }), {
   in: (data) => /* transform unknown -> parseable shape */ data,
-});
+}) {}
 ```
 
 A common recipe — snake_case → camelCase aliases (copy into your project):
@@ -66,9 +66,9 @@ const aliases =
     return out;
   };
 
-const UserDto = ZodDto(z.object({ userId: z.number(), firstName: z.string() }), {
+class UserDto extends ZodDto(z.object({ userId: z.number(), firstName: z.string() }), {
   in: aliases({ user_id: 'userId', first_name: 'firstName' }),
-});
+}) {}
 
 toDto(UserDto, { user_id: 1, first_name: 'Ada' });
 // -> { userId: 1, firstName: 'Ada' }
@@ -79,12 +79,12 @@ toDto(UserDto, { user_id: 1, first_name: 'Ada' });
 Attached to the instance prototype as `toJSON`. `JSON.stringify` picks it up automatically; nested DTOs serialize through their own `out`.
 
 ```ts
-const UserDto = ZodDto(z.object({ firstName: z.string(), lastName: z.string(), password: z.string() }), {
+class UserDto extends ZodDto(z.object({ firstName: z.string(), lastName: z.string(), password: z.string() }), {
   out: (parsed) => ({
     fullName: `${parsed.firstName} ${parsed.lastName}`,
     // password stripped
   }),
-});
+}) {}
 
 const user = toDto(UserDto, { firstName: 'Ada', lastName: 'Lovelace', password: 'x' });
 user.password; // 'x' — instance retains the original parsed shape
@@ -115,7 +115,7 @@ class MyPoint extends ZodDto<MyPoint>()(z.object({ x: z.number(), y: z.number() 
   label() { return `(${this.x}, ${this.y})`; }
 }
 
-const List = ZodDto(z.object({ points: z.array(MyPoint) }));
+class List extends ZodDto(z.object({ points: z.array(MyPoint) })) {}
 const result = toDto(List, { points: [{ x: 1, y: 2 }] });
 result.points[0].label(); // OK — no cast
 ```
@@ -140,22 +140,22 @@ class WithEmailDto extends BaseDto.extend({ email: z.email() }) {}
 If your base DTO uses `out` to strip sensitive fields (`password`, internal IDs, ...), the derived DTO will **not** inherit it — the field can re-leak through `JSON.stringify`. Re-apply `out` (or wrap `pick`/`omit` so the field cannot exist in the derived shape at all):
 
 ```ts
-const UserDto = ZodDto(
+class UserDto extends ZodDto(
   z.object({ id: z.string(), name: z.string(), password: z.string() }),
   { out: ({ password, ...rest }) => rest },
-);
+) {}
 
 // ❌ password leaks back — `out` was dropped:
-const PublicDto = UserDto.omit({ id: true });
+class PublicDto extends UserDto.omit({ id: true }) {}
 
 // ✅ either re-apply `out`...
-const PublicDto2 = ZodDto(
+class PublicDto2 extends ZodDto(
   z.object({ name: z.string(), password: z.string() }),
   { out: ({ password, ...rest }) => rest },
-);
+) {}
 
 // ✅ ...or omit the sensitive field from the shape itself:
-const PublicDto3 = UserDto.omit({ id: true, password: true });
+class PublicDto3 extends UserDto.omit({ id: true, password: true }) {}
 ```
 
 ### Re-attach methods on the derived class
@@ -217,16 +217,16 @@ class SafeUserDto extends ZodDto(z.object(UserDto.shape), {
 A DTO class is a valid Zod schema, usable wherever a schema is accepted.
 
 ```ts
-const AddressDto = ZodDto(z.object({ city: z.string() }));
-const PersonDto = ZodDto(z.object({ name: z.string(), address: AddressDto }));
+class AddressDto extends ZodDto(z.object({ city: z.string() })) {}
+class PersonDto extends ZodDto(z.object({ name: z.string(), address: AddressDto })) {}
 ```
 
 Unions of DTOs work as schema fields:
 
 ```ts
-const CatDto = ZodDto(z.object({ kind: z.literal('cat'), name: z.string() }));
-const DogDto = ZodDto(z.object({ kind: z.literal('dog'), name: z.string() }));
-const OwnerDto = ZodDto(z.object({ pet: z.discriminatedUnion('kind', [CatDto, DogDto]) }));
+class CatDto extends ZodDto(z.object({ kind: z.literal('cat'), name: z.string() })) {}
+class DogDto extends ZodDto(z.object({ kind: z.literal('dog'), name: z.string() })) {}
+class OwnerDto extends ZodDto(z.object({ pet: z.discriminatedUnion('kind', [CatDto, DogDto]) })) {}
 ```
 
 ## Error handling
@@ -250,7 +250,7 @@ try {
 
 ```ts
 // Parse: string/number -> bigint
-const AmountDto = ZodDto(z.object({ amount: z.coerce.bigint().min(0n) }));
+class AmountDto extends ZodDto(z.object({ amount: z.coerce.bigint().min(0n) })) {}
 
 // Serialize: patch BigInt.prototype once at app bootstrap.
 declare global {
@@ -285,12 +285,12 @@ const ListUsersDto = withPagination(z.object({ search: z.string().optional() }))
 `out` receives the whole parsed object, so cross-field logic works naturally. It also runs in normal application scope, so request-scoped context (AsyncLocalStorage, etc.) is available:
 
 ```ts
-const ProfileDto = ZodDto(z.object({ userId: z.uuid(), secret: z.string() }), {
+class ProfileDto extends ZodDto(z.object({ userId: z.uuid(), secret: z.string() }), {
   out: (parsed) => ({
     ...parsed,
     secret: ctx().userId === parsed.userId ? parsed.secret : undefined,
   }),
-});
+}) {}
 ```
 
 ## API

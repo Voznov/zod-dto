@@ -56,6 +56,16 @@ describe('applySwaggerDecorators', () => {
       const { so } = applySwaggerDecorators(z.date());
       expect(so).toEqual({ type: 'string', format: 'date-time' });
     });
+
+    it('z.iso.datetime() emits OpenAPI-standard date-time, not Zod-internal datetime', () => {
+      const { so } = applySwaggerDecorators(z.iso.datetime());
+      expect(so).toMatchObject({ type: 'string', format: 'date-time' });
+    });
+
+    it('z.iso.date() / z.iso.time() pass through unchanged (already standard)', () => {
+      expect(applySwaggerDecorators(z.iso.date()).so).toMatchObject({ type: 'string', format: 'date' });
+      expect(applySwaggerDecorators(z.iso.time()).so).toMatchObject({ type: 'string', format: 'time' });
+    });
   });
 
   describe('enums & literals', () => {
