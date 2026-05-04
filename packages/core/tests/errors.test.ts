@@ -53,7 +53,7 @@ describe('formatZodIssues', () => {
   });
 });
 
-describe('toDto array path prefixing', () => {
+describe('toDto path prefixing', () => {
   class UserDto extends ZodDto(
     z.object({
       id: z.uuid(),
@@ -61,9 +61,9 @@ describe('toDto array path prefixing', () => {
     }),
   ) {}
 
-  it('prefixes the element index when input is an array', () => {
+  it('prefixes the element index when schema is z.array(Dto)', () => {
     try {
-      toDto(UserDto, [
+      toDto(z.array(UserDto), [
         { id: '00000000-0000-4000-8000-000000000000', email: 'ok@example.com' },
         { id: 'broken', email: 'broken' },
       ]);

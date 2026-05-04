@@ -117,12 +117,102 @@ app.useGlobalPipes(
 );
 ```
 
+## Response validation — `@ZodSerialize` / `@ZodResponse`
+
+Method decorators that parse the return value of a controller (or any class) method through a Zod schema. If the method returns something that doesn't match the schema, a `ZodDtoSerializationError` is thrown — caught at runtime *before* the value reaches the client, so server-side bugs are surfaced as 500s instead of leaking malformed payloads or extra fields.
+
+- **`@ZodSerialize`** — runtime parsing only. Use on services, repositories, internal methods.
+- **`@ZodResponse`** — `@ZodSerialize` + auto-emit `@ApiResponse` Swagger metadata (and register inner DTOs via `@ApiExtraModels`). Use on controller routes.
+
+Both come in two overloads:
+
+- **Strict** — schema passed explicitly. The method's return type is constrained at compile time to match the schema's output; `tsc` errors on mismatch.
+- **Loose** — no schema. Resolves from `design:returntype` metadata at runtime (`: NoteDto` annotation suffices). No compile-time check; doesn't work on generic return types (`NoteDto[]`, `Promise<NoteDto>`, unions) since TypeScript erases generics in metadata — pass the schema explicitly in that case.
+
+```ts
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { ZodResponse } from '@voznov/zod-dto-nestjs';
+import { z } from 'zod';
+
+@Controller('notes')
+export class NotesController {
+  // Strict + auto-Swagger: tsc enforces the return type, spec gets `$ref` to NoteDto.
+  @Get(':id')
+  @ZodResponse(NoteDto)
+  findOne(@Param() p: NoteIdParam): NoteDto { /* ... */ }
+
+  // Async + array: tsc enforces `Promise<NoteDto[]>`. Generics erased in design:returntype,
+  // so the schema must be passed explicitly here.
+  @Get()
+  @ZodResponse(z.array(NoteDto))
+  async list(): Promise<NoteDto[]> { /* ... */ }
+
+  // Override status (default 200) + description for the OpenAPI operation.
+  @Post()
+  @ZodResponse(NoteDto, { status: 201, description: 'note created' })
+  create(@Body() body: CreateNoteDto): NoteDto { /* ... */ }
+}
+```
+
+Runtime-only sibling for layers below the controller — same overloads, no Swagger emission:
+
+```ts
+import { ZodSerialize } from '@voznov/zod-dto-nestjs';
+
+class NotesService {
+  // Throws ZodDtoSerializationError if the return shape doesn't match.
+  @ZodSerialize(NoteDto)
+  findOne(id: string): NoteDto { /* ... */ }
+
+  // Loose: schema resolved from `design:returntype` (NoteDto class). Won't work for `Promise<...>` / `NoteDto[]` — generic erased to `Promise` / `Array`. Use the strict overload for those.
+  @ZodSerialize()
+  default(): NoteDto { /* ... */ }
+}
+```
+
+### Options
+
+Both decorators accept the full `ToDtoOptions` bag (`preprocessors`, `observers`, `errorClass` — same semantics as [`toDto.with`](https://www.npmjs.com/package/@voznov/zod-dto), but applied to the method's *return* value instead of an input). The default `errorClass` is `ZodDtoSerializationError` (vs `ZodDtoValidationError` for `toDto`), so an exception filter can split client errors from server bugs (see below).
+
+`@ZodResponse` extends the bag with two Swagger-only fields:
+
+- `status: number` — HTTP status for the OpenAPI response object. Default `200`.
+- `description: string` — description on the OpenAPI response object.
+
+```ts
+@ZodResponse(NoteDto, { status: 201, observers: [(note) => metrics.recordCreate(note)] })
+async create(): Promise<NoteDto> { /* ... */ }
+```
+
+### Differentiating client errors from server errors
+
+`ZodDtoSerializationError extends ZodDtoValidationError`, so a single exception filter can split request-validation failures (client → 400) from response-validation failures (server → 500):
+
+```ts
+import { ZodDtoValidationError } from '@voznov/zod-dto';
+import { ZodDtoSerializationError } from '@voznov/zod-dto-nestjs';
+
+@Catch(ZodDtoValidationError)
+export class ZodExceptionFilter implements ExceptionFilter {
+  catch(error: ZodDtoValidationError, host: ArgumentsHost) {
+    const isServerBug = error instanceof ZodDtoSerializationError;
+    const status = isServerBug ? 500 : 400;
+    // log, format, respond...
+  }
+}
+```
+
 ## API
 
-| Export                           | Description                                                                                                                    |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `ZodValidationPipe`              | `PipeTransform` for `@Body()` / `@Param()` / `@Query()`. Accepts `{ createError?: (issues: string[]) => Error }`.              |
-| `applySwaggerDecorators(schema)` | Low-level: apply `@ApiProperty` metadata to a schema. Auto-invoked via `registerOnCreate`; export is for manual/edge-case use. |
+| Export                            | Description                                                                                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ZodValidationPipe`               | `PipeTransform` for `@Body()` / `@Param()` / `@Query()`. Accepts `{ createError?: (issues: string[]) => Error }`.                          |
+| `ZodValidationPipeOptions`        | Options type for `ZodValidationPipe`.                                                                                                      |
+| `ZodSerialize(schema?, options?)` | Method decorator: runtime-parse the return value through `schema` (or via `design:returntype` if omitted). Throws `ZodDtoSerializationError` on mismatch. |
+| `ZodResponse(schema?, options?)`  | `ZodSerialize` + auto-emits `@ApiResponse` Swagger metadata (and `@ApiExtraModels` for inner DTOs).                                        |
+| `ZodResponseOptions`              | Options type for `ZodResponse` (`ToDtoOptions & { status?, description? }`).                                                               |
+| `ZodDtoSerializationError`        | Subclass of `ZodDtoValidationError` thrown by `@ZodSerialize` / `@ZodResponse` when a method returns an invalid shape.                     |
+| `applySwaggerDecorators(schema)`  | Low-level: apply `@ApiProperty` metadata to a schema. Auto-invoked via `registerOnCreate`; export is for manual/edge-case use.             |
 
 ## License
 

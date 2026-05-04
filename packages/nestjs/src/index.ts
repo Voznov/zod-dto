@@ -7,3 +7,5 @@ registerOnCreate((dto) => void Promise.resolve().then(() => applySwaggerDecorato
 export { ZodValidationPipe } from './pipe';
 export type { ZodValidationPipeOptions } from './pipe';
 export { applySwaggerDecorators } from './swagger';
+export { ZodSerialize, ZodResponse, ZodDtoSerializationError } from './zod-serialize';
+export type { ZodResponseOptions } from './zod-serialize';

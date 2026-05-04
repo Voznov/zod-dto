@@ -16,8 +16,8 @@ describe('toDto', () => {
     expect(result).toEqual({ id: 1, label: 'foo' });
   });
 
-  it('parses valid array and returns array of class instances', () => {
-    const results = toDto(ItemDto, [
+  it('parses valid array via z.array(Dto) and returns array of class instances', () => {
+    const results = toDto(z.array(ItemDto), [
       { id: 1, label: 'a' },
       { id: 2, label: 'b' },
     ]);
@@ -45,7 +45,7 @@ describe('toDto', () => {
 
   it('throws ZodDtoValidationError on invalid item in array', () => {
     expect(() =>
-      toDto(ItemDto, [
+      toDto(z.array(ItemDto), [
         { id: 1, label: 'ok' },
         { id: 'bad', label: 'fail' },
       ]),
@@ -58,8 +58,147 @@ describe('toDto', () => {
     expect((result as Record<string, unknown>)['extra']).toBeUndefined();
   });
 
-  it('handles empty array', () => {
-    const results = toDto(ItemDto, []);
+  it('handles empty array via z.array(Dto)', () => {
+    const results = toDto(z.array(ItemDto), []);
     expect(results).toEqual([]);
+  });
+
+  describe('toDto.with — preset preprocessor', () => {
+    const snakeToCamel = (data: unknown): unknown => {
+      if (typeof data !== 'object' || data === null) return data;
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
+        out[k.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())] = v;
+      }
+
+      return out;
+    };
+
+    const RowDto = ZodDto(z.object({ id: z.number(), itemLabel: z.string() }));
+
+    it('accepts a bare function as shorthand for { preprocessors: [fn] }', () => {
+      const fromDb = toDto.with(snakeToCamel);
+      const result = fromDb(RowDto, { id: 1, item_label: 'foo' });
+      expect(result).toBeInstanceOf(RowDto);
+      expect(result).toEqual({ id: 1, itemLabel: 'foo' });
+    });
+
+    it('accepts an explicit options object', () => {
+      const fromDb = toDto.with({ preprocessors: [snakeToCamel] });
+      expect(fromDb(RowDto, { id: 1, item_label: 'a' })).toEqual({ id: 1, itemLabel: 'a' });
+    });
+
+    it('preprocesses input once before passing to z.array(Dto) — preprocessor is whole-input, not per-element', () => {
+      // Whole-array preprocessor: snake_keys → camel_keys at the top level only.
+      // For per-element transformation users wrap with z.preprocess inside the schema instead.
+      const stripExtras = (data: unknown): unknown => (Array.isArray(data) ? data.map(snakeToCamel) : data);
+      const fromDb = toDto.with(stripExtras);
+      const out = fromDb(z.array(RowDto), [
+        { id: 1, item_label: 'a' },
+        { id: 2, item_label: 'b' },
+      ]);
+      expect(out).toHaveLength(2);
+      expect(out[0]).toEqual({ id: 1, itemLabel: 'a' });
+      expect(out[1]).toEqual({ id: 2, itemLabel: 'b' });
+    });
+
+    it('chains preprocessors when .with() is called multiple times', () => {
+      const dropNulls = (data: unknown): unknown => {
+        if (typeof data !== 'object' || data === null) return data;
+
+        return Object.fromEntries(Object.entries(data as Record<string, unknown>).filter(([, v]) => v !== null));
+      };
+      const fromDb = toDto.with(dropNulls).with(snakeToCamel);
+      const out = fromDb(RowDto, { id: 1, item_label: 'a', other: null });
+      expect(out).toEqual({ id: 1, itemLabel: 'a' });
+    });
+
+    it('does not mutate the base toDto', () => {
+      const fromDb = toDto.with(snakeToCamel);
+      void fromDb;
+      // base toDto must still parse exact-shape input untouched
+      expect(toDto(RowDto, { id: 1, itemLabel: 'plain' })).toEqual({ id: 1, itemLabel: 'plain' });
+      expect(() => toDto(RowDto, { id: 1, item_label: 'snake' })).toThrow(ZodDtoValidationError);
+    });
+
+    it('accepts plain Zod schemas (not just ZodDto classes)', () => {
+      const schema = z.object({ name: z.string() });
+      const fromDb = toDto.with(snakeToCamel);
+      expect(fromDb(schema, { name: 'Ada' })).toEqual({ name: 'Ada' });
+    });
+  });
+
+  describe('toDto.with — errorClass', () => {
+    class DbValidationError extends ZodDtoValidationError {
+      override readonly name = 'DbValidationError';
+    }
+
+    it('throws the configured error subclass on validation failure', () => {
+      const fromDb = toDto.with({ errorClass: DbValidationError });
+      try {
+        fromDb(ItemDto, { id: 'bad' });
+        expect.unreachable('should have thrown');
+      } catch (e) {
+        expect(e).toBeInstanceOf(DbValidationError);
+        expect(e).toBeInstanceOf(ZodDtoValidationError);
+        expect((e as DbValidationError).issues.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('does not affect the base toDto', () => {
+      const fromDb = toDto.with({ errorClass: DbValidationError });
+      void fromDb;
+      try {
+        toDto(ItemDto, { id: 'bad' });
+        expect.unreachable('should have thrown');
+      } catch (e) {
+        expect(e).toBeInstanceOf(ZodDtoValidationError);
+        expect(e).not.toBeInstanceOf(DbValidationError);
+      }
+    });
+
+    it('latest .with(errorClass) wins on chained composition', () => {
+      class A extends ZodDtoValidationError {}
+      class B extends ZodDtoValidationError {}
+      const chained = toDto.with({ errorClass: A }).with({ errorClass: B });
+      expect(() => chained(ItemDto, { id: 'bad' })).toThrow(B);
+    });
+
+    it('inline options on the call site override preset errorClass', () => {
+      const fromDb = toDto.with({ errorClass: DbValidationError });
+      class Inline extends ZodDtoValidationError {}
+      expect(() => fromDb(ItemDto, { id: 'bad' }, { errorClass: Inline })).toThrow(Inline);
+    });
+  });
+
+  describe('toDto.with — observers', () => {
+    it('fires observers after a successful parse with the parsed data', () => {
+      const seen: unknown[] = [];
+      const traced = toDto.with({ observers: [(d) => seen.push(d)] });
+      const result = traced(ItemDto, { id: 1, label: 'x' });
+      expect(seen).toEqual([{ id: 1, label: 'x' }]);
+      expect(result).toBeInstanceOf(ItemDto);
+    });
+
+    it('does not fire observers on validation failure', () => {
+      const seen: unknown[] = [];
+      const traced = toDto.with({ observers: [(d) => seen.push(d)] });
+      expect(() => traced(ItemDto, { id: 'bad' })).toThrow(ZodDtoValidationError);
+      expect(seen).toEqual([]);
+    });
+
+    it('observers cannot mutate the returned value (return is ignored)', () => {
+      const traced = toDto.with({ observers: [() => 'IGNORED' as unknown as void] });
+      const result = traced(ItemDto, { id: 1, label: 'x' });
+      expect(result).toEqual({ id: 1, label: 'x' });
+      expect(result).toBeInstanceOf(ItemDto);
+    });
+
+    it('chains observers in registration order', () => {
+      const order: string[] = [];
+      const traced = toDto.with({ observers: [() => order.push('a')] }).with({ observers: [() => order.push('b')] });
+      traced(ItemDto, { id: 1, label: 'x' });
+      expect(order).toEqual(['a', 'b']);
+    });
   });
 });

@@ -1,9 +1,6 @@
 import { z } from 'zod';
 import { isZodDtoClass, ZodDtoBase, type ZodDtoClass } from './base';
-import { formatZodIssues, ZodDtoValidationError } from './errors';
-
-export type { ZodDtoClass } from './base';
-export { isZodDtoClass } from './base';
+import { notifyDtoCreated } from './register-on-create';
 
 export interface ZodDtoOptions<T extends z.ZodRawShape = z.ZodRawShape> {
   /** Runs as `z.preprocess` so nested DTOs resolve their own hook during a parent's `safeParse`. */
@@ -14,21 +11,6 @@ export interface ZodDtoOptions<T extends z.ZodRawShape = z.ZodRawShape> {
    */
   out?: (parsed: z.infer<z.ZodObject<T>>) => unknown;
 }
-
-type OnCreateHook = (dtoClass: ZodDtoClass) => void;
-
-const onCreateHooks: OnCreateHook[] = [];
-const createdDtos: ZodDtoClass[] = [];
-
-export const registerOnCreate = (hook: OnCreateHook): (() => void) => {
-  onCreateHooks.push(hook);
-  for (const dto of createdDtos) hook(dto);
-
-  return () => {
-    const index = onCreateHooks.indexOf(hook);
-    if (index !== -1) onCreateHooks.splice(index, 1);
-  };
-};
 
 const perClassZod = new WeakMap<new () => object, object>();
 
@@ -142,49 +124,7 @@ export function ZodDto<T extends z.ZodRawShape>(
     },
   }) as ZodDtoClass<z.ZodObject<T>>;
 
-  createdDtos.push(proxy as ZodDtoClass);
-  for (const hook of onCreateHooks) {
-    hook(proxy as ZodDtoClass);
-  }
+  notifyDtoCreated(proxy as ZodDtoClass);
 
   return proxy;
-}
-
-/**
- * `z.lazy(...)` with an explicit-generic shortcut so a DTO can reference itself
- * without falling into TS's circular-base-class error. The thunk is typed
- * `() => any` to skip body return-type inference; the explicit generic carries
- * the *instance type* the schema parses to.
- *
- * ```ts
- * class CategoryDto extends ZodDto(
- *   z.object({
- *     name: z.string(),
- *     children: z.array(lazyDto<CategoryDto>(() => CategoryDto)),
- *   }),
- * ) {}
- * ```
- */
-
-export const lazyDto = <T>(thunk: () => any): z.ZodType<T> => z.lazy(thunk);
-
-type ToDtoCtor = (new () => object) & { safeParse(data: unknown): z.ZodSafeParseResult<unknown> };
-
-export function toDto<T extends ToDtoCtor>(DtoClass: T, data: unknown[]): InstanceType<T>[];
-export function toDto<T extends ToDtoCtor>(DtoClass: T, data: unknown): InstanceType<T>;
-export function toDto<T extends ToDtoCtor>(DtoClass: T, data: unknown | unknown[]): InstanceType<T> | InstanceType<T>[] {
-  const isArray = Array.isArray(data);
-  const items = isArray ? data : [data];
-
-  const results = items.map((item, index) => {
-    const result = DtoClass.safeParse(item);
-    if (!result.success) {
-      const issues = isArray ? result.error.issues.map((issue) => ({ ...issue, path: [index, ...issue.path] })) : result.error.issues;
-      throw new ZodDtoValidationError(formatZodIssues(issues));
-    }
-
-    return result.data as InstanceType<T>;
-  });
-
-  return isArray ? results : results[0];
 }

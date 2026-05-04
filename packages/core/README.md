@@ -74,6 +74,37 @@ toDto(UserDto, { user_id: 1, first_name: 'Ada' });
 // -> { userId: 1, firstName: 'Ada' }
 ```
 
+### `toDto.with` — preprocessor at the call site, not on the DTO
+
+When the same preprocessor needs to run for *every* DTO at a layer boundary (e.g. every postgres row goes through `snake_case → camelCase`), embedding it per-DTO via `options.in` repeats the same wiring on every class. `toDto.with(...)` produces a `toDto`-shaped function with the preprocessor pre-bound:
+
+```ts
+import { toDto } from '@voznov/zod-dto';
+
+const fromDb = toDto.with(snakeToCamel);
+
+class UserRepository {
+  async findOne(id: string): Promise<UserDto> {
+    const row: unknown = await postgres.query('select * from users where id=$1', [id]);
+    return fromDb(UserDto, row); // unknown narrows to UserDto, snake→camel applied transparently
+  }
+}
+```
+
+Accepts either a bare function (`toDto.with(fn)`) or an options object. Chained calls compose: `toDto.with(A).with(B)` runs `A` first, then `B`. The base `toDto` is unchanged — you can have multiple boundary-specific factories side by side. Supported options:
+
+- `preprocessors: ((data: unknown) => unknown)[]` — transform input before validation, applied left-to-right.
+- `observers: ((data: unknown) => void)[]` — side-effect hooks fired *after* a successful parse (logging, metrics, tagging). Return value is ignored, so observers can never alter the result.
+- `errorClass: new (issues: string[]) => ZodDtoValidationError` — constructor used when validation fails. Useful for differentiating boundary errors in exception filters / catch chains:
+
+  ```ts
+  class DbValidationError extends ZodDtoValidationError {}
+  const fromDb = toDto.with({ preprocessors: [snakeToCamel], errorClass: DbValidationError });
+  // try { fromDb(UserDto, row) } catch (e) { if (e instanceof DbValidationError) ... }
+  ```
+
+Inline options on the call site (`toDto(schema, data, { errorClass: ... })`) override preset values — the latest `errorClass` wins, while `preprocessors` and `observers` always concatenate.
+
 ## `options.out` — serialization hook
 
 Attached to the instance prototype as `toJSON`. `JSON.stringify` picks it up automatically; nested DTOs serialize through their own `out`.
@@ -298,7 +329,8 @@ class ProfileDto extends ZodDto(z.object({ userId: z.uuid(), secret: z.string() 
 | Export                     | Description                                                                        |
 | -------------------------- | ---------------------------------------------------------------------------------- |
 | `ZodDto(schema, options?)` | DTO class factory.                                                                 |
-| `toDto(DtoClass, data)`    | Validate + return instance(s). Throws `ZodDtoValidationError`.                     |
+| `toDto(schema, data)`      | Validate + return result. Schema is any DTO class or `z.ZodType` (e.g. `z.array(Dto)`, `z.union([...])`). Throws `ZodDtoValidationError`. |
+| `toDto.with(fn \| options)` | Returns a `toDto` with a preset preprocessor. Chained `.with()` composes (left-to-right). |
 | `ZodDtoValidationError`    | `{ issues: string[] }` thrown by `toDto`.                                          |
 | `formatZodIssues(issues)`  | Format `z.core.$ZodIssue[]` into `path: message` strings.                          |
 | `isZodDtoClass(value)`     | Type guard.                                                                        |
