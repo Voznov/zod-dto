@@ -1,6 +1,6 @@
 # @voznov/zod-dto-nestjs
 
-NestJS adapter for `@voznov/zod-dto` — validation pipe + automatic Swagger integration.
+NestJS adapter for [`@voznov/zod-dto`](https://www.npmjs.com/package/@voznov/zod-dto) — validation pipe + automatic Swagger integration.
 
 ## Install
 

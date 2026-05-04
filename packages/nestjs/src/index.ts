@@ -1,8 +1,8 @@
 import { registerOnCreate } from '@voznov/zod-dto';
 import { applySwaggerDecorators } from './swagger';
 
-// Auto-register swagger decoration on every ZodDto() creation when this package is imported.
-registerOnCreate(applySwaggerDecorators);
+// Deferred to a microtask so self-referential DTOs (`lazyDto<X>(() => X)`) resolve past TDZ.
+registerOnCreate((dto) => void Promise.resolve().then(() => applySwaggerDecorators(dto)));
 
 export { ZodValidationPipe } from './pipe';
 export type { ZodValidationPipeOptions } from './pipe';

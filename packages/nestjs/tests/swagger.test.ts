@@ -1,4 +1,5 @@
-import { lazyDto, ZodDto } from '@voznov/zod-dto';
+import { getSchemaPath } from '@nestjs/swagger';
+import { lazyDto, registerOnCreate, ZodDto } from '@voznov/zod-dto';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { applySwaggerDecorators } from '../src/swagger';
@@ -304,6 +305,65 @@ describe('applySwaggerDecorators', () => {
       // Re-entry on the lazy resolves to a $ref to CategoryDto, not a placeholder:
       const meta = Reflect.getMetadata('swagger/apiModelProperties', CategoryDto.prototype, 'children') as { type?: unknown };
       expect(meta).toBeDefined();
+    });
+
+    // Self-reference: `lazyDto<X>(() => X)` thunk fires while `X` is still in TDZ
+    // when the swagger hook runs synchronously inside `extends ZodDto(...)`.
+    it('does NOT crash with ReferenceError when the hook defers to a microtask', async () => {
+      const unregister = registerOnCreate((dto) => void Promise.resolve().then(() => applySwaggerDecorators(dto)));
+      try {
+        let CategoryDtoCaptured!: Function;
+        expect(() => {
+          class CategoryDto extends ZodDto(
+            z.object({
+              name: z.string(),
+              children: z.array(lazyDto<CategoryDto>(() => CategoryDto)),
+            }),
+          ) {}
+          CategoryDtoCaptured = CategoryDto;
+        }).not.toThrow();
+
+        await Promise.resolve();
+        const meta = Reflect.getMetadata('swagger/apiModelProperties', CategoryDtoCaptured.prototype, 'children') as { items?: { $ref?: string } };
+        expect(meta.items?.$ref).toBe(getSchemaPath(CategoryDtoCaptured));
+      } finally {
+        unregister();
+      }
+    });
+
+    // Mutual recursion (Author ↔ Book): `Book` doesn't exist yet when Author declaration runs.
+    it('mutually recursive DTOs (Author ↔ Book) decorate without ReferenceError', async () => {
+      const unregister = registerOnCreate((dto) => void Promise.resolve().then(() => applySwaggerDecorators(dto)));
+      try {
+        let AuthorCaptured!: Function;
+        let BookCaptured!: Function;
+        expect(() => {
+          class Author extends ZodDto(
+            z.object({
+              name: z.string(),
+              books: z.array(lazyDto<Book>(() => Book)),
+            }),
+          ) {}
+
+          class Book extends ZodDto(
+            z.object({
+              title: z.string(),
+              author: lazyDto<Author>(() => Author),
+            }),
+          ) {}
+
+          AuthorCaptured = Author;
+          BookCaptured = Book;
+        }).not.toThrow();
+
+        await Promise.resolve();
+        const authorBooks = Reflect.getMetadata('swagger/apiModelProperties', AuthorCaptured.prototype, 'books') as { items?: { $ref?: string } };
+        const bookAuthor = Reflect.getMetadata('swagger/apiModelProperties', BookCaptured.prototype, 'author') as { oneOf?: Array<{ $ref?: string }> };
+        expect(authorBooks.items?.$ref).toBe(getSchemaPath(BookCaptured));
+        expect(bookAuthor.oneOf?.[0]?.$ref).toBe(getSchemaPath(AuthorCaptured));
+      } finally {
+        unregister();
+      }
     });
   });
 

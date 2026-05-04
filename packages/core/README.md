@@ -8,6 +8,8 @@ Framework-agnostic DTO factory built on Zod 4. Turn a Zod object schema into a D
 pnpm add @voznov/zod-dto zod
 ```
 
+> Using NestJS? See [`@voznov/zod-dto-nestjs`](https://www.npmjs.com/package/@voznov/zod-dto-nestjs) — validation pipe + automatic OpenAPI/Swagger generation (`.default`, `.describe`, recursive schemas, etc. are forwarded to the spec without manual `@ApiProperty`).
+
 ## Quick start
 
 ```ts
@@ -122,15 +124,15 @@ The generic fills `Self` so `z.infer<>` carries the subclass type; the empty `()
 
 ## Composition
 
-`.extend` / `.pick` / `.omit` build a **new** DTO from the base's shape — and the shape is all that carries over. The `in` hook, the `out` hook, subclass methods, and any custom prototype members are intentionally dropped.
+`.extend` / `.pick` / `.omit` build a **new** DTO from the base's shape — and the shape is all that carries over. The `in` hook, the `out` hook, subclass methods, custom prototype members, and the `instanceof` relationship to the base are all intentionally dropped — the derived class is not a subclass of the base, so `instance instanceof BaseDto` is `false`.
 
 The reason is type safety: a different shape invalidates the typed argument of `in`/`out` and may invalidate the bodies of subclass methods (a method that touches `this.password` would `tsc`-pass on a derived class that no longer has `password`). Silently inheriting them would either lie at the type level or crash at runtime.
 
 ```ts
-const BaseDto = ZodDto(z.object({ id: z.uuid(), name: z.string() }));
-const CreateDto = BaseDto.omit({ id: true });
-const NamedOnlyDto = BaseDto.pick({ name: true });
-const WithEmailDto = BaseDto.extend({ email: z.email() });
+class BaseDto extends ZodDto(z.object({ id: z.uuid(), name: z.string() })) {}
+class CreateDto extends BaseDto.omit({ id: true }) {}
+class NamedOnlyDto extends BaseDto.pick({ name: true }) {}
+class WithEmailDto extends BaseDto.extend({ email: z.email() }) {}
 ```
 
 ### ⚠️ Re-apply `out` for security-sensitive DTOs
@@ -183,7 +185,7 @@ class CreateUserDto extends ZodDto(
   z.object({ name: z.string().min(2), email: z.email(), age: z.number().int().min(18) }),
 ) {}
 
-// CreateUserDto + UpdateUserDto pattern (the class-validator / @nestjs/swagger PartialType analogue):
+// CreateUserDto + UpdateUserDto pattern:
 class UpdateUserDto extends ZodDto(CreateUserDto.partial()) {}
 
 // Same for `.required()`, `.merge()`, etc.:
@@ -192,16 +194,16 @@ class StrictDto extends ZodDto(CreateUserDto.partial().required()) {}
 
 The wrap is intentional, not boilerplate: it picks up the new shape, applies the per-class instance walker, and re-fires `onCreate` (so Swagger metadata is regenerated on the partial shape — without the wrap you'd get `@ApiProperty` for the original fields).
 
-### `ZodDto(dto)` is idempotent — `ZodDto(dto, options)` is not supported
+### `ZodDto(dto)` is idempotent — `ZodDto(dto, options)` silently drops `options`
 
 Passing an existing DTO to `ZodDto(...)` returns the same class — it's a no-op, intentionally, so chained derivations (`class X extends ZodDto(Base.omit({...}))`) don't blow up `tsc` on circular type unification.
 
-Re-wrapping a DTO with new `in`/`out` options is **not** supported by `ZodDto(dto, options)` — the no-options overload is the only one that accepts a DTO. If you need fresh options on an existing DTO's shape, wrap the underlying schema instead:
+> ⚠️ **`ZodDto(dto, options)` silently drops the options.** A DTO is structurally compatible with `z.ZodObject` so the call type-checks, but at runtime the short-circuit returns the same DTO untouched. The result: a sanitizer like `ZodDto(UserDto, { out: ({ password, ...rest }) => rest })` looks correct, the compiler approves, and `password` ships in the response anyway. Always wrap the underlying schema, not the DTO:
 
 ```ts
 class UserDto extends ZodDto(z.object({ id: z.string(), name: z.string(), password: z.string() })) {}
 
-// ❌ Type-error: only `ZodDto(dto)` (no options) is allowed for a DTO input.
+// ❌ Compiles, but `out` is silently ignored — `password` will leak through `JSON.stringify`.
 // const Safe = ZodDto(UserDto, { out: ({ password, ...rest }) => rest });
 
 // ✅ Re-wrap the raw schema:
