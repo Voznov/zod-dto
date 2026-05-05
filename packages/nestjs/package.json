@@ -1,6 +1,6 @@
 {
   "name": "@voznov/zod-dto-nestjs",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "NestJS adapter for @voznov/zod-dto — validation pipe, Swagger generation",
   "keywords": [
     "zod",

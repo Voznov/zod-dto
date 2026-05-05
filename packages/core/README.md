@@ -94,7 +94,7 @@ class UserRepository {
 Accepts either a bare function (`toDto.with(fn)`) or an options object. Chained calls compose: `toDto.with(A).with(B)` runs `A` first, then `B`. The base `toDto` is unchanged — you can have multiple boundary-specific factories side by side. Supported options:
 
 - `preprocessors: ((data: unknown) => unknown)[]` — transform input before validation, applied left-to-right.
-- `observers: ((data: unknown) => void)[]` — side-effect hooks fired *after* a successful parse (logging, metrics, tagging). Return value is ignored, so observers can never alter the result.
+- `observers: ((data: unknown) => void)[]` — side-effect hooks fired *after* a successful parse (logging, metrics, tagging). The parsed object is passed by reference, so observer mutations *will* leak into the result; treat them as advisory.
 - `errorClass: new (issues: string[]) => ZodDtoValidationError` — constructor used when validation fails. Useful for differentiating boundary errors in exception filters / catch chains:
 
   ```ts

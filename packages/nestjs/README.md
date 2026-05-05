@@ -124,9 +124,33 @@ Method decorators that parse the return value of a controller (or any class) met
 - **`@ZodSerialize`** — runtime parsing only. Use on services, repositories, internal methods.
 - **`@ZodResponse`** — `@ZodSerialize` + auto-emit `@ApiResponse` Swagger metadata (and register inner DTOs via `@ApiExtraModels`). Use on controller routes.
 
-Both come in two overloads:
+`ZodDtoSerializationError extends ZodDtoValidationError` — wire up one exception filter to split client errors (400) from server bugs (500):
 
-- **Strict** — schema passed explicitly. The method's return type is constrained at compile time to match the schema's output; `tsc` errors on mismatch.
+```ts
+import { ArgumentsHost, Catch, ExceptionFilter, HttpStatus } from '@nestjs/common';
+import { ZodDtoValidationError } from '@voznov/zod-dto';
+import { ZodDtoSerializationError } from '@voznov/zod-dto-nestjs';
+
+@Catch(ZodDtoValidationError)
+export class ZodExceptionFilter implements ExceptionFilter {
+  catch(error: ZodDtoValidationError, host: ArgumentsHost) {
+    const isServerBug = error instanceof ZodDtoSerializationError;
+    const status = isServerBug ? HttpStatus.INTERNAL_SERVER_ERROR : HttpStatus.BAD_REQUEST;
+    host.switchToHttp().getResponse().status(status).json({
+      statusCode: status,
+      message: error.message,
+      issues: isServerBug ? undefined : error.issues,
+    });
+  }
+}
+
+// main.ts
+app.useGlobalFilters(new ZodExceptionFilter());
+```
+
+Both decorators come in two overloads:
+
+- **Strict** — schema passed explicitly. The method's return type is constrained at compile time to match the schema's output; `tsc` errors on mismatch as `TS1241: Unable to resolve signature of method decorator...` — the actual mismatch is on the deepest line of the message (`Type 'X' is not assignable to type 'NoteDto | Promise<NoteDto>'`).
 - **Loose** — no schema. Resolves from `design:returntype` metadata at runtime (`: NoteDto` annotation suffices). No compile-time check; doesn't work on generic return types (`NoteDto[]`, `Promise<NoteDto>`, unions) since TypeScript erases generics in metadata — pass the schema explicitly in that case.
 
 ```ts
@@ -182,24 +206,6 @@ Both decorators accept the full `ToDtoOptions` bag (`preprocessors`, `observers`
 ```ts
 @ZodResponse(NoteDto, { status: 201, observers: [(note) => metrics.recordCreate(note)] })
 async create(): Promise<NoteDto> { /* ... */ }
-```
-
-### Differentiating client errors from server errors
-
-`ZodDtoSerializationError extends ZodDtoValidationError`, so a single exception filter can split request-validation failures (client → 400) from response-validation failures (server → 500):
-
-```ts
-import { ZodDtoValidationError } from '@voznov/zod-dto';
-import { ZodDtoSerializationError } from '@voznov/zod-dto-nestjs';
-
-@Catch(ZodDtoValidationError)
-export class ZodExceptionFilter implements ExceptionFilter {
-  catch(error: ZodDtoValidationError, host: ArgumentsHost) {
-    const isServerBug = error instanceof ZodDtoSerializationError;
-    const status = isServerBug ? 500 : 400;
-    // log, format, respond...
-  }
-}
 ```
 
 ## API
