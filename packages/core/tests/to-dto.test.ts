@@ -201,4 +201,34 @@ describe('toDto', () => {
       expect(order).toEqual(['a', 'b']);
     });
   });
+
+  describe('toDto.async — async parsing path', () => {
+    const AsyncDto = ZodDto(
+      z.object({
+        email: z.string().refine(async (s) => s.includes('@'), { message: 'must be email' }),
+      }),
+    );
+
+    it('parses through safeParseAsync when schema has async refines', async () => {
+      const result = await toDto.async(AsyncDto, { email: 'a@b' });
+      expect(result).toEqual({ email: 'a@b' });
+    });
+
+    it('throws ZodDtoValidationError with formatted issues on async refine failure', async () => {
+      await expect(toDto.async(AsyncDto, { email: 'no-at-sign' })).rejects.toBeInstanceOf(ZodDtoValidationError);
+    });
+
+    it('respects errorClass on async failure', async () => {
+      class CustomError extends ZodDtoValidationError {}
+      const traced = toDto.with({ errorClass: CustomError });
+      await expect(traced.async(AsyncDto, { email: 'no' })).rejects.toBeInstanceOf(CustomError);
+    });
+
+    it('observers fire after a successful async parse', async () => {
+      const seen: unknown[] = [];
+      const traced = toDto.with({ observers: [(v) => seen.push(v)] });
+      await traced.async(AsyncDto, { email: 'a@b' });
+      expect(seen).toEqual([{ email: 'a@b' }]);
+    });
+  });
 });

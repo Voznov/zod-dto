@@ -105,6 +105,19 @@ Accepts either a bare function (`toDto.with(fn)`) or an options object. Chained 
 
 Inline options on the call site (`toDto(schema, data, { errorClass: ... })`) override preset values — the latest `errorClass` wins, while `preprocessors` and `observers` always concatenate.
 
+For schemas with async refines or transforms, use `toDto.async(...)` (or `.async(...)` on the function returned by `.with(...)`) — it routes through `safeParseAsync`, returns `Promise<result>`, and preserves the same throw contract on failure:
+
+```ts
+const AsyncUserDto = ZodDto(z.object({
+  email: z.string().refine(async (s) => await isUnique(s), { message: 'taken' }),
+}));
+
+await toDto.async(AsyncUserDto, { email: 'a@b' });
+
+const fromDb = toDto.with({ preprocessors: [snakeToCamel] });
+await fromDb.async(AsyncUserDto, dbRow);   // .with(...) result also has .async
+```
+
 ## `options.out` — serialization hook
 
 Attached to the instance prototype as `toJSON`. `JSON.stringify` picks it up automatically; nested DTOs serialize through their own `out`.
@@ -329,8 +342,9 @@ class ProfileDto extends ZodDto(z.object({ userId: z.uuid(), secret: z.string() 
 | Export                     | Description                                                                        |
 | -------------------------- | ---------------------------------------------------------------------------------- |
 | `ZodDto(schema, options?)` | DTO class factory.                                                                 |
-| `toDto(schema, data)`      | Validate + return result. Schema is any DTO class or `z.ZodType` (e.g. `z.array(Dto)`, `z.union([...])`). Throws `ZodDtoValidationError`. |
-| `toDto.with(fn \| options)` | Returns a `toDto` with a preset preprocessor. Chained `.with()` composes (left-to-right). |
+| `toDto(schema, data, options?)`    | Validate + return result. Schema is any DTO class or `z.ZodType` (e.g. `z.array(Dto)`, `z.union([...])`). Throws `ZodDtoValidationError`. |
+| `toDto.async(schema, data, options?)` | Async variant — uses `safeParseAsync` so schemas with `async .refine` / async transforms parse cleanly. Returns `Promise<result>`; same throw contract on failure. |
+| `toDto.with(fn \| options)` | Returns a `toDto` with a preset preprocessor. Chained `.with()` composes (left-to-right). The returned function exposes the same `.async()` variant. |
 | `ZodDtoValidationError`    | `{ issues: string[] }` thrown by `toDto`.                                          |
 | `formatZodIssues(issues)`  | Format `z.core.$ZodIssue[]` into `path: message` strings.                          |
 | `isZodDtoClass(value)`     | Type guard.                                                                        |

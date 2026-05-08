@@ -242,6 +242,25 @@ const applyDecoratorsImpl = (schema: z.core.$ZodType): { so: SchemaObject; selfR
       return so.oneOf?.length === 1 ? so.oneOf[0] : so;
     });
 
+    if (schema instanceof z.ZodDiscriminatedUnion) {
+      const propertyName = schema._zod.def.discriminator;
+      const mapping: Record<string, string> = {};
+      // All-or-nothing: if any variant can't be mapped, fall back to plain oneOf — partial mappings mislead codegen.
+      const allMappable = schema.options.every((option, i) => {
+        if (!(option instanceof z.ZodObject)) return false;
+        const field: unknown = option.shape[propertyName];
+        if (!(field instanceof z.ZodLiteral)) return false;
+        if (!('$ref' in oneOf[i])) return false;
+        for (const literalValue of field.values) mapping[String(literalValue)] = oneOf[i].$ref;
+
+        return true;
+      });
+
+      if (allMappable) {
+        return { so: { oneOf, discriminator: { propertyName, mapping } }, selfRequired: true, innerSchemas };
+      }
+    }
+
     return { so: { oneOf }, selfRequired: true, innerSchemas };
   }
 

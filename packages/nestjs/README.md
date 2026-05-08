@@ -59,13 +59,15 @@ Importing this package side-effect-registers an `onCreate` hook that decorates e
 
 Supported shapes: scalars, objects (nested), arrays, tuples, records, enums, literals, unions (including discriminated), intersections, optional/nullable/default wrappers, and nested DTO references (via `oneOf` + `ApiExtraModels`).
 
+`z.discriminatedUnion(key, [...])` of DTO classes emits a proper OpenAPI `discriminator: { propertyName, mapping }` alongside `oneOf`, so codegen tools (`openapi-typescript`, `openapi-generator`) generate tagged unions instead of structural ones. Falls back to plain `oneOf` if any variant can't be mapped (non-DTO class or non-literal discriminator field).
+
 `.default(value)` is forwarded to the OpenAPI `default` keyword.
 
 > ⚠️ **Lazy defaults are frozen at decoration time.** For `.default(() => ...)`, the thunk is invoked **once** when the swagger metadata is generated, and the resolved value is baked into the spec. Anything non-stable — `Date.now()`, `randomUUID()`, `new Date()` — will freeze at the value the server happened to produce on startup, and every endpoint's example in your docs will show that one stale value. Use a stable thunk, or a literal default.
 
 `.describe(text)` is forwarded to the OpenAPI `description` keyword. Works on the wrapper or on the inner type — `z.string().describe('Login email').optional()` and `z.string().optional().describe('Login email')` both end up with `description: 'Login email'` in the spec.
 
-`.refine(...)` validators run at request-validation time but are **not** reflected in the spec — JSON Schema can't express custom predicates, and a single `description` for a chain of refines (`.refine(...).refine(...).refine(...)`) would be ambiguous. Put human-readable docs in `.describe(...)` instead.
+`.refine(...)` validators run at runtime (in `ZodValidationPipe` for requests, in `@ZodSerialize` / `@ZodResponse` for responses) but are **not** reflected in the spec — JSON Schema can't express custom predicates, and a single `description` for a chain of refines (`.refine(...).refine(...).refine(...)`) would be ambiguous. Put human-readable docs in `.describe(...)` instead.
 
 > ⚠️ **`in` / `out` hooks are runtime-only.** The walker only reads the schema's structure, not the options passed to `ZodDto(schema, { in, out })`. A `out: ({ password, ...rest }) => rest` correctly strips `password` from the response *body*, but the OpenAPI schema still lists `password` as a property — the spec lies about a field that runtime drops. Same for `in`: snake_case→camelCase aliases applied via `in` are invisible in the spec, so docs show only the camelCase shape. If spec-correctness matters, either omit the field from the schema itself (`schema.omit({ password: true })`) or maintain a separate response DTO.
 
@@ -206,6 +208,18 @@ Both decorators accept the full `ToDtoOptions` bag (`preprocessors`, `observers`
 ```ts
 @ZodResponse(NoteDto, { status: 201, observers: [(note) => metrics.recordCreate(note)] })
 async create(): Promise<NoteDto> { /* ... */ }
+```
+
+### Async refines on the response schema
+
+When the method returns a Promise, the decorator awaits it and parses through `safeParseAsync` — that's the only signal it uses. So if your schema has async validation (`z.string().refine(async ...)`, async transforms — typical when the same schema is reused for request validation), make the method `async` and you'll get the async parse path; failures still throw `ZodDtoSerializationError` and flow through your exception filter, not raw Zod async errors.
+
+```ts
+class Repo {
+  // Promise return → safeParseAsync. Works with async refines on the schema.
+  @ZodSerialize(SchemaWithAsyncRefine)
+  async findOne(id: string): Promise<...> { /* ... */ }
+}
 ```
 
 ## API

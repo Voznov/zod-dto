@@ -271,6 +271,19 @@ describe('applySwaggerDecorators', () => {
       const { so } = applySwaggerDecorators(z.intersection(z.object({ a: z.string() }), z.object({ b: z.number() })));
       expect(so.allOf).toHaveLength(2);
     });
+
+    it('discriminatedUnion of DTOs emits OpenAPI discriminator with literal-keyed mapping', () => {
+      class CatDto extends ZodDto(z.object({ kind: z.literal('cat'), name: z.string() })) {}
+      class DogDto extends ZodDto(z.object({ kind: z.literal('dog'), name: z.string() })) {}
+      // Force decoration so DTOs land in components.schemas via decoratedDtoClasses cache.
+      applySwaggerDecorators(CatDto);
+      applySwaggerDecorators(DogDto);
+      const { so } = applySwaggerDecorators(z.discriminatedUnion('kind', [CatDto, DogDto]));
+      expect(so.oneOf).toHaveLength(2);
+      expect(so.discriminator?.propertyName).toBe('kind');
+      expect(so.discriminator?.mapping?.['cat']).toBe('#/components/schemas/CatDto');
+      expect(so.discriminator?.mapping?.['dog']).toBe('#/components/schemas/DogDto');
+    });
   });
 
   describe('DTO class decoration', () => {

@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { ApiExtraModels, ApiResponse } from '@nestjs/swagger';
-import { toDto, type ToDtoOptions, type ZodDtoClass, ZodDtoValidationError } from '@voznov/zod-dto';
+import { isZodDtoClass, toDto, type ToDtoOptions, type ZodDtoClass, ZodDtoValidationError } from '@voznov/zod-dto';
 import { z } from 'zod';
 import { applySwaggerDecorators } from './swagger';
 import { redecorateFromReflect } from './utils';
@@ -15,8 +15,11 @@ type Method<T extends z.ZodType> = (...args: never[]) => ToDtoResult<T> | Promis
 /** Thrown when a `@ZodSerialize`-decorated method returns a value that fails the schema */
 export class ZodDtoSerializationError extends ZodDtoValidationError {}
 
-const resolveSchema = (schema: z.ZodType | undefined, target: object, propertyKey: string | symbol, decoratorName: string): z.ZodType => {
-  if (schema) return schema;
+const resolveSchema = (schema: unknown, target: object, propertyKey: string | symbol, decoratorName: string): z.ZodType => {
+  if (schema !== undefined && !(schema instanceof z.ZodType) && !isZodDtoClass(schema)) {
+    throw new Error(`${decoratorName} on ${target.constructor.name}.${String(propertyKey)}: schema argument must be a Zod type or DTO class (got ${typeof schema}).`);
+  }
+  if (schema) return schema as z.ZodType;
   const rt: unknown = Reflect.getMetadata('design:returntype', target, propertyKey);
   if (rt instanceof z.ZodType) return rt;
   const rtName = rt instanceof Object && 'name' in rt && typeof rt.name === 'string' ? rt.name : 'unknown';
@@ -42,7 +45,7 @@ const wrapMethod =
       [methodName](...args: unknown[]) {
         const out = originalMethod.apply(this, args);
         if (out instanceof Promise) {
-          return out.then((v) => serialize(resolved, v));
+          return out.then(async (v) => serialize.async(resolved, v));
         }
 
         return serialize(resolved, out);
@@ -52,27 +55,14 @@ const wrapMethod =
     redecorateFromReflect(originalMethod, descriptor.value);
   };
 
-const API_RESPONSE_KEY = 'swagger/apiResponse';
-
 const wrapApiResponse =
   (schema: z.ZodType | undefined, options: AsResponseOptions | undefined): MethodDecorator =>
   (target, propertyKey, descriptor) => {
     const resolved = resolveSchema(schema, target, propertyKey, '@ZodResponse');
-    const status = options?.status ?? 200;
-    // Catches bottom-up duplicate (any decorator below ours runs first); reverse order is missed but rarer.
-    const existing = descriptor.value ? (Reflect.getMetadata(API_RESPONSE_KEY, descriptor.value) as Record<string | number, unknown> | undefined) : undefined;
-    if (existing?.[status]) {
-      console.warn(
-        `@ZodResponse on ${target.constructor.name}.${String(propertyKey)}: ` +
-          `another response decorator already set metadata for status ${status} — they will silent-merge. ` +
-          `Remove the duplicate to avoid mixed spec output.`,
-      );
-    }
-
     const { so, innerSchemas } = applySwaggerDecorators(resolved);
     // Unwrap singleton oneOf at the spec boundary so codegen doesn't produce `OneOf<[X]>` wrappers.
     const schemaForApi = Object.keys(so).length === 1 && Array.isArray(so.oneOf) && so.oneOf.length === 1 ? so.oneOf[0] : so;
-    ApiResponse({ status, description: options?.description, schema: schemaForApi })(target, propertyKey, descriptor);
+    ApiResponse({ status: options?.status ?? 200, description: options?.description, schema: schemaForApi })(target, propertyKey, descriptor);
     if (innerSchemas.size > 0) {
       const classTarget = typeof target === 'function' ? target : target.constructor;
       ApiExtraModels(...innerSchemas)(classTarget);

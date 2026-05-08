@@ -199,6 +199,47 @@ describe('ZodSerialize (method decorator)', () => {
     });
   });
 
+  describe('async refines on the response schema', () => {
+    const AsyncUserDto = ZodDto(
+      z.object({
+        id: z.uuid(),
+        email: z.string().refine(async (s) => s.includes('@'), { message: 'must be email' }),
+      }),
+    );
+
+    it('async-refine validation failure rejects with ZodDtoSerializationError (not raw $ZodAsyncError)', async () => {
+      class Repo {
+        async findOne(): Promise<typeof AsyncUserDto> {
+          return { id: '00000000-0000-4000-8000-000000000000', email: 'no-at-sign' } as never;
+        }
+      }
+      decorate(Repo.prototype, 'findOne', Promise, AsyncUserDto);
+      await expect(new Repo().findOne()).rejects.toBeInstanceOf(ZodDtoSerializationError);
+    });
+
+    it('async-refine successful parse returns the value', async () => {
+      class Repo {
+        async findOne(): Promise<typeof AsyncUserDto> {
+          return { id: '00000000-0000-4000-8000-000000000000', email: 'a@b' } as never;
+        }
+      }
+      decorate(Repo.prototype, 'findOne', Promise, AsyncUserDto);
+      const result = await new Repo().findOne();
+      expect(result).toEqual({ id: '00000000-0000-4000-8000-000000000000', email: 'a@b' });
+    });
+  });
+
+  describe('input validation', () => {
+    it('throws a readable error when the schema arg is not a Zod type or DTO class', () => {
+      class Repo {
+        foo() {
+          return null as never;
+        }
+      }
+      expect(() => decorate(Repo.prototype, 'foo', undefined, {} as never)).toThrow(/schema argument must be a Zod type or DTO class/);
+    });
+  });
+
   describe('asResponse() — runtime serialization (still wraps method)', () => {
     it('parses return value through the schema (DTO class)', () => {
       class C {
