@@ -1,5 +1,6 @@
 import { ApiExtraModels, ApiProperty, type ApiPropertyOptions, refs } from '@nestjs/swagger';
 import { type SchemaObject } from '@nestjs/swagger/dist/interfaces/open-api-spec.interface';
+import { type SchemaObjectMetadata } from '@nestjs/swagger/dist/interfaces/schema-object-metadata.interface';
 import { isZodDtoClass, type ZodDtoClass } from '@voznov/zod-dto';
 import { z } from 'zod';
 import { mapValues } from './utils';
@@ -9,6 +10,19 @@ const schemaObjectToApiPropertyOptions = (so: SchemaObject, selfRequired: boolea
     return { ...so, type: Array, required: selfRequired };
   }
 
+  // Inline object schema: NestJS Swagger keeps `required: string[]` (inner) separate from
+  // `selfRequired: boolean` (parent-required flag) — using one key for both squashes the array.
+  if (so.type === 'object') {
+    return {
+      ...so,
+      type: 'object',
+      properties: (so.properties ?? {}) as Record<string, SchemaObjectMetadata>,
+      selfRequired,
+    };
+  }
+
+  // Scalars / arrays — `required: boolean` is the only meaning, no inner-array conflict.
+  // Cast bridges TS's variant ambiguity (the enumName-bearing union member); shape itself is fine.
   return { ...so, required: selfRequired } as ApiPropertyOptions;
 };
 

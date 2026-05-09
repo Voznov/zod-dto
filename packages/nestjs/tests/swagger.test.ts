@@ -300,6 +300,33 @@ describe('applySwaggerDecorators', () => {
       const { innerSchemas } = applySwaggerDecorators(OuterDto);
       expect(innerSchemas.has(OuterDto)).toBe(true);
     });
+
+    // `.describe()` / `.nullish()` / `.default()` on a DTO clone the schema and lose the DTO
+    // identity, so the walker emits an inline-object shape instead of a `$ref`. The shape must
+    // still carry the inner `required: string[]`. NestJS Swagger uses `selfRequired: boolean`
+    // as a separate parent-required marker — using `required` for both squashes the array.
+    it('inline-object emit preserves inner required[] and tracks parent-required via selfRequired', () => {
+      class InnerDto extends ZodDto(z.object({ id: z.uuid(), note: z.string().optional() })) {}
+      class WrapperDto extends ZodDto(
+        z.object({
+          desc: InnerDto.describe('with desc'),
+          nullish: InnerDto.nullish(),
+          defaulted: InnerDto.default({ id: '00000000-0000-4000-8000-00000000aaaa' }),
+        }),
+      ) {}
+
+      applySwaggerDecorators(WrapperDto);
+
+      // Inner required is the array of `InnerDto`'s required fields — only `id`, not `note`.
+      // selfRequired is the parent-required boolean: `.describe()` keeps the field required,
+      // `.nullish()` and `.default()` make it optional in the parent.
+      const expectations: Record<string, boolean> = { desc: true, nullish: false, defaulted: false };
+      for (const [field, expectedSelfRequired] of Object.entries(expectations)) {
+        const meta = Reflect.getMetadata('swagger/apiModelProperties', WrapperDto.prototype, field) as { required?: string[]; selfRequired?: boolean };
+        expect(meta.required).toEqual(['id']);
+        expect(meta.selfRequired).toBe(expectedSelfRequired);
+      }
+    });
   });
 
   describe('recursive schemas (z.lazy)', () => {
